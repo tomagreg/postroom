@@ -628,4 +628,4 @@ if __name__ == "__main__":
     args = _parse_args()
     DB_PATH = args.db
     CALIBRATE = args.calibrate
-    app.run(host="127.0.0.1", port=args.port, debug=False)
+    app.run(host="0.0.0.0", port=args.port, debug=False)
