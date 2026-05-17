@@ -1,0 +1,117 @@
+rules:
+  - id: otp_codes
+    type: auth
+    keywords:
+      - "code de vérification"
+      - " OTP "
+      - "magic link"
+      - "verify your email"
+      - "your verification code"
+      - "code de connexion"
+      - "lien de connexion"
+      - "one-time password"
+      - "temporary code"
+    action: delete
+    delay_hours: 1
+
+  - id: notifications_auto
+    type: notification
+    senders:
+      - "noreply@"
+      - "no-reply@"
+      - "notifications@"
+      - "github.com"
+    except_domains:
+      - "sncf.fr"
+      - "oui.sncf"
+      - "sncf.com"
+      - "tgv-ouigo.com"
+    no_action_required: true
+    action: delete
+    delay_hours: 0
+
+  - id: tracking_delivered
+    type: tracking
+    keywords:
+      - livré
+      - delivered
+      - remis
+      - "out for delivery"
+      - "your order has been delivered"
+    action: delete
+    delay_days: 2
+
+  - id: newsletters_inactive
+    type: newsletter
+    has_unsubscribe_link: true
+    not_opened_days: 30
+    action: delete
+
+  - id: promo_pending
+    type: promo
+    keywords:
+      - promo
+      - offre spéciale
+      - réduction
+      - soldes
+      - "limited time"
+      - "% de réduction"
+      - "% off"
+      - "bon de réduction"
+      - "code promo"
+    action: promo_queue
+    delay_days: 14
+
+  - id: booking_past
+    type: booking
+    keywords:
+      - confirmation
+      - réservation
+      - booking
+      - "your reservation"
+      - "your booking"
+    action: delete
+    delay_after_event_days: 7
+
+  - id: daily_digests
+    type: digest
+    senders:
+      - "duolingo"
+      - "strava"
+    action: delete
+    delay_days: 1
+
+  - id: review_delete
+    type: review
+    keywords:
+      - "notez votre expérience"
+      - "donnez votre avis"
+      - "évaluez votre"
+      - "votre avis nous intéresse"
+      - "comment s'est passé"
+      - "rate your experience"
+      - "leave a review"
+      - "how was your"
+      - "share your feedback"
+      - "tell us what you think"
+    action: delete
+    delay_days: 1
+
+  - id: social_pending
+    type: social
+    senders:
+      - "notifications-noreply@linkedin.com"
+      - "notification@linkedin.com"
+      - "noreply@linkedin.com"
+      - "notify@twitter.com"
+      - "notification@instagram.com"
+      - "noreply@facebook.com"
+      - "notification@tiktok.com"
+    action: social_queue
+    delay_days: 7
+
+blacklist:
+  senders: []
+  domains: []
+
+confidence_threshold: 0.75

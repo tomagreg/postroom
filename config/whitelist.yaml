@@ -1,0 +1,8 @@
+whitelist:
+  domains:
+    - efrei.fr
+    - gouv.fr
+    - ffvoile.fr
+    - ameli.fr
+  senders: []
+  keywords_subject: []

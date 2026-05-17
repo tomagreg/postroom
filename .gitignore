@@ -1,0 +1,9 @@
+config/accounts.env
+postroom.db
+*.db
+logs/*.log
+attachments/
+__pycache__/
+*.pyc
+.env
+data/
