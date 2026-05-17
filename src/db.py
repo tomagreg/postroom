@@ -37,7 +37,8 @@ def init_db(db_path: Path = DEFAULT_DB_PATH) -> None:
                 reason      TEXT,
                 delay_hours INTEGER NOT NULL DEFAULT 0,
                 decided_at  TEXT NOT NULL,
-                purged_at   TEXT
+                purged_at   TEXT,
+                reviewed    TEXT CHECK(reviewed IN ('keep','delete'))
             );
 
             CREATE TABLE IF NOT EXISTS rule_hits (

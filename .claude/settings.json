@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/test_smoke.py -v)",
+      "Bash(python -m pytest tests/ -v)",
+      "Skill(claude-api)",
+      "Skill(claude-api:*)",
+      "Bash(python -m pytest tests/test_llm_agent.py -v)",
+      "Bash(python -m pytest -v)",
+      "Bash(python -m pytest tests/test_dashboard.py -v)",
+      "Bash(python src/main.py --dry-run --limit 5)",
+      "Bash(copy config\\\\accounts.env.example config\\\\accounts.env)",
+      "PowerShell(Copy-Item \"c:\\\\Users\\\\tomag\\\\python_projects\\\\postroom\\\\config\\\\accounts.env.example\" \"c:\\\\Users\\\\tomag\\\\python_projects\\\\postroom\\\\config\\\\accounts.env\")",
+      "Bash(python src/dashboard.py)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:5002/)",
+      "Bash(python -m pytest tests/test_rule_engine.py tests/test_smoke.py tests/test_llm_agent.py -v)",
+      "Bash(python src/main.py --dry-run --limit 10)",
+      "Bash(Start-Process python *)",
+      "PowerShell(Start-Process python -ArgumentList \"src/dashboard.py\" -WorkingDirectory \"c:\\\\Users\\\\tomag\\\\python_projects\\\\postroom\" -WindowStyle Hidden)",
+      "PowerShell(Start-Sleep 2; try { $r = Invoke-WebRequest http://127.0.0.1:5002/log -UseBasicParsing -TimeoutSec 3; \"HTTP $\\($r.StatusCode\\)\" } catch { $_.Exception.Message })",
+      "Bash(python src/main.py --dry-run --limit 20)",
+      "PowerShell(Get-Process python | Where-Object { $_.MainWindowTitle -eq \"\" } | Stop-Process -Force; Start-Sleep 1; Start-Process python -ArgumentList \"src/dashboard.py\" -WorkingDirectory \"c:\\\\Users\\\\tomag\\\\python_projects\\\\postroom\" -WindowStyle Hidden)",
+      "PowerShell(Start-Sleep 2; try { $r = Invoke-WebRequest http://127.0.0.1:5002/promos -UseBasicParsing -TimeoutSec 3; \"HTTP $\\($r.StatusCode\\)\" } catch { $_.Exception.Message })",
+      "Bash(python -c ' *)",
+      "Bash(python src/main.py --dry-run --limit 50)",
+      "PowerShell(Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq \"\" } | Stop-Process -Force; Start-Sleep 1; Start-Process python -ArgumentList \"src/dashboard.py\" -WorkingDirectory \"c:\\\\Users\\\\tomag\\\\python_projects\\\\postroom\" -WindowStyle Hidden)",
+      "PowerShell(Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq \"\" } | Stop-Process -Force; Start-Sleep 1; Start-Process python -ArgumentList \"src/dashboard.py\" -WorkingDirectory \"c:\\\\Users\\\\tomag\\\\python_projects\\\\postroom\" -WindowStyle Hidden; Start-Sleep 2; try { \\(Invoke-WebRequest http://127.0.0.1:5002/log -UseBasicParsing -TimeoutSec 3\\).StatusCode } catch { $_.Exception.Message })",
+      "Bash(python -m pytest tests/test_purge.py -v)",
+      "Bash(python -m pytest)"
+    ]
+  }
+}
