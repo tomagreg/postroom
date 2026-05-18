@@ -151,23 +151,28 @@ _BASE = """\
     });
   }
 
-  window.doReview = function(uid, verdict, subject, spanId) {
+  document.addEventListener('click', function(e) {
+    var btn = e.target.closest('.cal-btn');
+    if (!btn) return;
+    var span = btn.closest('[data-uid]');
+    if (!span) return;
+    var uid = span.dataset.uid;
+    var verdict = btn.dataset.verdict;
+    var subject = span.dataset.subject || '';
+    btn.disabled = true;
     fetch('/review/' + uid + '/' + verdict, {method:'POST'})
       .then(function(r){ return r.json(); })
       .then(function(data) {
-        var span = document.getElementById(spanId);
-        if (span) {
-          var badge = document.createElement('span');
-          badge.className = 'badge ' + verdict;
-          badge.textContent = verdict;
-          span.replaceWith(badge);
-        }
+        var badge = document.createElement('span');
+        badge.className = 'badge ' + verdict;
+        badge.textContent = verdict;
+        span.replaceWith(badge);
         var toasts = JSON.parse(sessionStorage.getItem('toasts') || '[]');
-        toasts.push({color:data.toast, uid:uid, subject:subject||'', ts:Date.now()});
+        toasts.push({color:data.toast, uid:uid, subject:subject, ts:Date.now()});
         sessionStorage.setItem('toasts', JSON.stringify(toasts));
         renderToasts();
       });
-  };
+  });
 
   function removeToast(uid) {
     var toasts = JSON.parse(sessionStorage.getItem('toasts') || '[]');
@@ -220,11 +225,9 @@ _LOG_TMPL = (
       {% if r.reviewed %}
         <span class="badge {{ r.reviewed }}" id="rev-{{ loop.index }}">{{ r.reviewed }}</span>
       {% else %}
-        <span id="rev-{{ loop.index }}">
-          <button class="btn-done" style="padding:.15rem .4rem;font-size:.75rem"
-            onclick="doReview('{{ r.email_uid }}','keep','{{ r.subject|replace("'","\\'") }}','rev-{{ loop.index }}')">✓</button>
-          <button style="background:#fee;color:#c00;border:none;border-radius:4px;padding:.15rem .4rem;font-size:.75rem;cursor:pointer"
-            onclick="doReview('{{ r.email_uid }}','delete','{{ r.subject|replace("'","\\'") }}','rev-{{ loop.index }}')">🗑</button>
+        <span id="rev-{{ loop.index }}" data-uid="{{ r.email_uid }}" data-subject="{{ r.subject | e }}">
+          <button class="btn-done cal-btn" data-verdict="keep" style="padding:.15rem .4rem;font-size:.75rem">✓</button>
+          <button class="cal-btn" data-verdict="delete" style="background:#fee;color:#c00;border:none;border-radius:4px;padding:.15rem .4rem;font-size:.75rem;cursor:pointer">🗑</button>
         </span>
       {% endif %}
     </td>
