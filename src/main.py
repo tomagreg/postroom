@@ -114,6 +114,7 @@ def process_account(account: dict, conn_db, whitelist: dict, rules: list,
 
             # Couche 3 — LLM si nécessaire
             if decision["action"] == "llm_required" and llm_client is not None:
+                counters["llm_required"] += 1
                 llm_result = llm_agent.classify_with_escalation(
                     email_data, name, llm_client, threshold=confidence_threshold
                 )
