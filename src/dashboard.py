@@ -7,12 +7,9 @@ Routes :
     GET /promos                → promos en attente
     GET /social                → notifications sociales en attente
     GET /stats                 → statistiques
-    GET /calibration           → désaccords humain/pipeline (mode --calibrate)
-    POST /review/<uid>/keep    → marquer un mail à garder (mode --calibrate)
-    POST /review/<uid>/delete  → marquer un mail à supprimer (mode --calibrate)
 
 Usage :
-    python src/dashboard.py [--port 5002] [--db path/to/postroom.db] [--calibrate]
+    python src/dashboard.py [--port 5002] [--db path/to/postroom.db]
 """
 import argparse
 import sqlite3
@@ -29,7 +26,6 @@ import db as db_module
 
 app = Flask(__name__)
 DB_PATH = ROOT / "postroom.db"
-CALIBRATE = False  # activé par --calibrate
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -43,11 +39,6 @@ def _conn() -> sqlite3.Connection:
 
 def _rows(conn, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
     return conn.execute(sql, params).fetchall()
-
-
-@app.context_processor
-def _inject_calibrate():
-    return {"calibrate": CALIBRATE}
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +95,6 @@ _BASE = """\
     <a href="{{ url_for('promos') }}">Promos</a>
     <a href="{{ url_for('social') }}">Réseau</a>
     <a href="{{ url_for('stats') }}">Stats</a>
-    {% if calibrate %}<a href="{{ url_for('calibration') }}" style="color:#ffd580">⚙ Calibration</a>{% endif %}
   </nav>
 </header>
 <main>
@@ -122,11 +112,10 @@ _LOG_TMPL = (
   <thead><tr>
     <th>Date</th><th>Compte</th><th>Expéditeur</th><th>Objet</th>
     <th>Action</th><th>Score</th><th>LLM</th><th>Règle</th><th>Raison</th>
-    {% if calibrate %}<th>Revue</th>{% endif %}
   </tr></thead>
   <tbody>
   {% for r in rows %}
-  <tr{% if calibrate and r.reviewed %} style="opacity:.6"{% endif %}>
+  <tr>
     <td style="white-space:nowrap">{{ r.decided_at[:16].replace("T"," ") }}</td>
     <td>{{ r.account }}</td>
     <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ r.sender }}">{{ r.sender }}</td>
@@ -136,20 +125,6 @@ _LOG_TMPL = (
     <td style="text-align:center">{% if r.rule_id == 'llm' %}<span title="Classifié par LLM">🤖</span>{% endif %}</td>
     <td class="rule">{{ r.rule_id or "" }}</td>
     <td class="reason" title="{{ r.reason }}">{{ r.reason }}</td>
-    {% if calibrate %}
-    <td style="white-space:nowrap">
-      {% if r.reviewed %}
-        <span class="badge {{ r.reviewed }}">{{ r.reviewed }}</span>
-      {% else %}
-        <form class="inline" method="post" action="{{ url_for('review', uid=r.email_uid, verdict='keep') }}">
-          <button class="btn-done" type="submit" style="padding:.15rem .4rem;font-size:.75rem">✓</button>
-        </form>
-        <form class="inline" method="post" action="{{ url_for('review', uid=r.email_uid, verdict='delete') }}">
-          <button type="submit" style="background:#fee;color:#c00;border:none;border-radius:4px;padding:.15rem .4rem;font-size:.75rem;cursor:pointer">🗑</button>
-        </form>
-      {% endif %}
-    </td>
-    {% endif %}
   </tr>
   {% endfor %}
   </tbody>
@@ -284,12 +259,12 @@ def log():
     conn = _conn()
     try:
         rows = _rows(conn, """
-            SELECT d.decided_at, d.email_uid, d.reviewed,
+            SELECT d.decided_at, d.email_uid,
                    e.account, e.sender, e.subject,
                    d.action, d.score, d.rule_id, d.reason
             FROM decisions d
             LEFT JOIN emails e ON e.uid = d.email_uid
-            ORDER BY d.reviewed ASC, d.decided_at DESC
+            ORDER BY d.decided_at DESC
             LIMIT ?
         """, (limit,))
     finally:
@@ -460,112 +435,6 @@ def promo_delete(item_id: int):
     return redirect(url_for("promos"))
 
 
-@app.route("/review/<path:uid>/<verdict>", methods=["POST"])
-def review(uid: str, verdict: str):
-    if not CALIBRATE:
-        abort(403)
-    if verdict not in ("keep", "delete"):
-        abort(400)
-
-    now = datetime.now(timezone.utc).isoformat()
-    conn = _conn()
-    try:
-        row = conn.execute(
-            "SELECT action FROM decisions WHERE email_uid = ?", (uid,)
-        ).fetchone()
-        if not row:
-            abort(404)
-
-        conn.execute(
-            "UPDATE decisions SET reviewed = ? WHERE email_uid = ?",
-            (verdict, uid),
-        )
-
-        # Accord delete → rendre purgeable immédiatement (delay_hours = 0)
-        if verdict == "delete" and row["action"] in ("delete", "review"):
-            conn.execute(
-                "UPDATE decisions SET delay_hours = 0 WHERE email_uid = ?", (uid,)
-            )
-
-        conn.commit()
-    finally:
-        conn.close()
-
-    return redirect(url_for("log"))
-
-
-_CALIBRATION_TMPL = (
-    _BASE.replace("{% block content %}{% endblock %}", """\
-<p class="section-title">Désaccords pipeline / humain</p>
-<p style="font-size:.8rem;color:#888;margin-top:-.25rem">
-  Mails où ta décision diffère de l'action du pipeline — à utiliser pour affiner les règles.
-</p>
-{% if rows %}
-<table>
-  <thead><tr>
-    <th>Date</th><th>Compte</th><th>Expéditeur</th><th>Objet</th>
-    <th>Pipeline</th><th>Humain</th><th>LLM</th><th>Règle</th><th>Raison</th>
-  </tr></thead>
-  <tbody>
-  {% for r in rows %}
-  <tr>
-    <td style="white-space:nowrap">{{ r.decided_at[:16].replace("T"," ") }}</td>
-    <td>{{ r.account }}</td>
-    <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ r.sender }}">{{ r.sender }}</td>
-    <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ r.subject }}">{{ r.subject }}</td>
-    <td><span class="badge {{ r.action }}">{{ r.action }}</span></td>
-    <td><span class="badge {{ r.reviewed }}">{{ r.reviewed }}</span></td>
-    <td style="text-align:center">{% if r.rule_id == 'llm' %}🤖{% endif %}</td>
-    <td class="rule">{{ r.rule_id or "" }}</td>
-    <td class="reason" title="{{ r.reason }}">{{ r.reason }}</td>
-  </tr>
-  {% endfor %}
-  </tbody>
-</table>
-<p style="font-size:.8rem;color:#888;margin-top:.75rem">
-  {{ rows|length }} désaccord(s) — {{ agree_count }} accord(s) enregistré(s)
-</p>
-{% else %}
-<div class="empty">Aucun désaccord — les règles sont bien calibrées.</div>
-{% endif %}
-""")
-)
-
-
-@app.route("/calibration")
-def calibration():
-    if not CALIBRATE:
-        abort(403)
-    conn = _conn()
-    try:
-        # Désaccords : reviewed != action (en normalisant keep/delete)
-        rows = _rows(conn, """
-            SELECT d.decided_at, d.email_uid, d.action, d.reviewed,
-                   d.rule_id, d.reason, e.account, e.sender, e.subject
-            FROM decisions d
-            LEFT JOIN emails e ON e.uid = d.email_uid
-            WHERE d.reviewed IS NOT NULL
-              AND (
-                (d.reviewed = 'keep'   AND d.action IN ('delete','review'))
-                OR
-                (d.reviewed = 'delete' AND d.action = 'keep')
-              )
-            ORDER BY d.decided_at DESC
-        """)
-        agree_count = conn.execute("""
-            SELECT COUNT(*) FROM decisions
-            WHERE reviewed IS NOT NULL
-              AND (
-                (reviewed = 'keep'   AND action IN ('keep'))
-                OR
-                (reviewed = 'delete' AND action IN ('delete','review'))
-              )
-        """).fetchone()[0]
-    finally:
-        conn.close()
-    return render_template_string(_CALIBRATION_TMPL, rows=rows, agree_count=agree_count)
-
-
 @app.route("/stats")
 def stats():
     conn = _conn()
@@ -619,13 +488,10 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="postroom dashboard")
     parser.add_argument("--port", type=int, default=5002)
     parser.add_argument("--db", type=Path, default=ROOT / "postroom.db")
-    parser.add_argument("--calibrate", action="store_true",
-                        help="Active les boutons de revue humaine dans /log")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = _parse_args()
     DB_PATH = args.db
-    CALIBRATE = args.calibrate
     app.run(host="0.0.0.0", port=args.port, debug=False)
