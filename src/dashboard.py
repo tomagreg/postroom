@@ -127,15 +127,6 @@ _BASE = """\
 <div id="toast-stack" style="position:fixed;bottom:1.5rem;right:1.5rem;display:flex;flex-direction:column-reverse;gap:.5rem;z-index:999"></div>
 <script>
 (function(){
-  var p = new URLSearchParams(location.search);
-  var color = p.get('toast'), uid = p.get('uid'), subject = p.get('subject');
-  if (color && uid) {
-    var toasts = JSON.parse(sessionStorage.getItem('toasts') || '[]');
-    toasts.push({color:color, uid:uid, subject:subject||'', ts:Date.now()});
-    sessionStorage.setItem('toasts', JSON.stringify(toasts));
-    history.replaceState({}, '', location.pathname);
-  }
-
   function renderToasts() {
     var toasts = JSON.parse(sessionStorage.getItem('toasts') || '[]');
     var stack = document.getElementById('toast-stack');
@@ -159,6 +150,24 @@ _BASE = """\
       stack.appendChild(div);
     });
   }
+
+  window.doReview = function(uid, verdict, subject, spanId) {
+    fetch('/review/' + encodeURIComponent(uid) + '/' + verdict, {method:'POST'})
+      .then(function(r){ return r.json(); })
+      .then(function(data) {
+        var span = document.getElementById(spanId);
+        if (span) {
+          var badge = document.createElement('span');
+          badge.className = 'badge ' + verdict;
+          badge.textContent = verdict;
+          span.replaceWith(badge);
+        }
+        var toasts = JSON.parse(sessionStorage.getItem('toasts') || '[]');
+        toasts.push({color:data.toast, uid:uid, subject:subject||'', ts:Date.now()});
+        sessionStorage.setItem('toasts', JSON.stringify(toasts));
+        renderToasts();
+      });
+  };
 
   function removeToast(uid) {
     var toasts = JSON.parse(sessionStorage.getItem('toasts') || '[]');
@@ -209,14 +218,14 @@ _LOG_TMPL = (
     {% if calibrate %}
     <td style="white-space:nowrap">
       {% if r.reviewed %}
-        <span class="badge {{ r.reviewed }}">{{ r.reviewed }}</span>
+        <span class="badge {{ r.reviewed }}" id="rev-{{ loop.index }}">{{ r.reviewed }}</span>
       {% else %}
-        <form class="inline" method="post" action="{{ url_for('review', uid=r.email_uid, verdict='keep') }}">
-          <button class="btn-done" type="submit" style="padding:.15rem .4rem;font-size:.75rem">✓</button>
-        </form>
-        <form class="inline" method="post" action="{{ url_for('review', uid=r.email_uid, verdict='delete') }}">
-          <button type="submit" style="background:#fee;color:#c00;border:none;border-radius:4px;padding:.15rem .4rem;font-size:.75rem;cursor:pointer">🗑</button>
-        </form>
+        <span id="rev-{{ loop.index }}">
+          <button class="btn-done" style="padding:.15rem .4rem;font-size:.75rem"
+            onclick="doReview('{{ r.email_uid }}','keep','{{ r.subject|replace("'","\\'") }}','rev-{{ loop.index }}')">✓</button>
+          <button style="background:#fee;color:#c00;border:none;border-radius:4px;padding:.15rem .4rem;font-size:.75rem;cursor:pointer"
+            onclick="doReview('{{ r.email_uid }}','delete','{{ r.subject|replace("'","\\'") }}','rev-{{ loop.index }}')">🗑</button>
+        </span>
       {% endif %}
     </td>
     {% endif %}
@@ -578,7 +587,8 @@ def review(uid: str, verdict: str):
         subject = row["subject"] or ""
     finally:
         conn.close()
-    return redirect(url_for("log", toast=toast, uid=uid, subject=subject))
+    from flask import jsonify
+    return jsonify(ok=True, toast=toast, uid=uid, subject=subject)
 
 
 @app.route("/review/<path:uid>/undo", methods=["POST"])
