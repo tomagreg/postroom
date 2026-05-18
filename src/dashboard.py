@@ -95,6 +95,11 @@ _BASE = """\
   .btn-toggle { font-size: .8rem; padding: .3rem .8rem; border-radius: 4px; border: 1px solid; cursor: pointer; font-weight: 600; }
   .btn-toggle.off { background: transparent; border-color: #555; color: #888; }
   .btn-toggle.on  { background: #ffd580; border-color: #ffd580; color: #1a1a2e; }
+  .toast { position: fixed; bottom: 1.5rem; right: 1.5rem; padding: .6rem 1.2rem; border-radius: 6px; font-size: .85rem; font-weight: 600; opacity: 0; transition: opacity .3s; z-index: 999; pointer-events: none; }
+  .toast.show { opacity: 1; }
+  .toast-green  { background: #e6f4ea; color: #276221; border: 1px solid #276221; }
+  .toast-red    { background: #fee;    color: #c00;    border: 1px solid #c00; }
+  .toast-yellow { background: #fff3cd; color: #7a5800; border: 1px solid #e0a800; }
 </style>
 </head>
 <body>
@@ -119,6 +124,20 @@ _BASE = """\
 <main>
 {% block content %}{% endblock %}
 </main>
+<div id="toast" class="toast"></div>
+<script>
+(function(){
+  var t = new URLSearchParams(location.search).get('toast');
+  if (!t) return;
+  var msgs = {green:'✓ Accord — garder', red:'✓ Accord — supprimer', yellow:'⚠ Désaccord enregistré'};
+  var el = document.getElementById('toast');
+  el.textContent = msgs[t] || '';
+  el.className = 'toast toast-' + t;
+  setTimeout(function(){ el.classList.add('show'); }, 30);
+  setTimeout(function(){ el.classList.remove('show'); }, 2500);
+  history.replaceState({}, '', location.pathname);
+})();
+</script>
 </body>
 </html>
 """
@@ -506,9 +525,15 @@ def review(uid: str, verdict: str):
         if verdict == "delete" and row["action"] in ("delete", "review"):
             conn.execute("UPDATE decisions SET delay_hours = 0 WHERE email_uid = ?", (uid,))
         conn.commit()
+        if verdict == "keep" and row["action"] == "keep":
+            toast = "green"
+        elif verdict == "delete" and row["action"] in ("delete", "review"):
+            toast = "red"
+        else:
+            toast = "yellow"
     finally:
         conn.close()
-    return redirect(url_for("log"))
+    return redirect(url_for("log", toast=toast))
 
 
 _CALIBRATION_TMPL = (
