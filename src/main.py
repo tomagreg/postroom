@@ -84,16 +84,17 @@ def process_account(account: dict, conn_db, whitelist: dict, rules: list,
         for h in headers:
             uid = f"{name}:{h['uid']}"
 
-            body_preview = imap_client.fetch_body_preview(conn_imap, h["uid"])
-            email_data = {**h, "body_preview": body_preview}
-
             is_new = db.upsert_email(
                 conn_db, uid=uid, account=name,
                 sender=h["from"], subject=h["subject"],
                 date=h["date"], processed_at=now,
             )
-            if is_new:
-                counters["nouveaux"] += 1
+            if not is_new:
+                continue
+            counters["nouveaux"] += 1
+
+            body_preview = imap_client.fetch_body_preview(conn_imap, h["uid"])
+            email_data = {**h, "body_preview": body_preview}
 
             # Couches 1 + 2
             decision = rule_engine.process_email(
