@@ -124,18 +124,60 @@ _BASE = """\
 <main>
 {% block content %}{% endblock %}
 </main>
-<div id="toast" class="toast"></div>
+<div id="toast-stack" style="position:fixed;bottom:1.5rem;right:1.5rem;display:flex;flex-direction:column-reverse;gap:.5rem;z-index:999"></div>
 <script>
 (function(){
-  var t = new URLSearchParams(location.search).get('toast');
-  if (!t) return;
-  var msgs = {green:'✓ Accord — garder', red:'✓ Accord — supprimer', yellow:'⚠ Désaccord enregistré'};
-  var el = document.getElementById('toast');
-  el.textContent = msgs[t] || '';
-  el.className = 'toast toast-' + t;
-  setTimeout(function(){ el.classList.add('show'); }, 30);
-  setTimeout(function(){ el.classList.remove('show'); }, 2500);
-  history.replaceState({}, '', location.pathname);
+  var p = new URLSearchParams(location.search);
+  var color = p.get('toast'), uid = p.get('uid'), subject = p.get('subject');
+  if (color && uid) {
+    var toasts = JSON.parse(sessionStorage.getItem('toasts') || '[]');
+    toasts.push({color:color, uid:uid, subject:subject||'', ts:Date.now()});
+    sessionStorage.setItem('toasts', JSON.stringify(toasts));
+    history.replaceState({}, '', location.pathname);
+  }
+
+  function renderToasts() {
+    var toasts = JSON.parse(sessionStorage.getItem('toasts') || '[]');
+    var stack = document.getElementById('toast-stack');
+    stack.innerHTML = '';
+    toasts.forEach(function(t) {
+      var div = document.createElement('div');
+      div.className = 'toast toast-' + t.color + ' show';
+      div.style.cssText = 'position:relative;max-width:280px;display:flex;justify-content:space-between;align-items:center;gap:.75rem';
+      var subj = document.createElement('span');
+      subj.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1';
+      subj.textContent = t.subject || '(sans objet)';
+      var undo = document.createElement('button');
+      undo.textContent = 'Annuler';
+      undo.style.cssText = 'font-size:.75rem;padding:.15rem .4rem;flex-shrink:0;background:#fff5;border:1px solid currentColor;border-radius:3px;cursor:pointer;color:inherit';
+      undo.onclick = function() {
+        fetch('/review/' + encodeURIComponent(t.uid) + '/undo', {method:'POST'})
+          .then(function(){ removeToast(t.uid); });
+      };
+      div.appendChild(subj);
+      div.appendChild(undo);
+      stack.appendChild(div);
+    });
+  }
+
+  function removeToast(uid) {
+    var toasts = JSON.parse(sessionStorage.getItem('toasts') || '[]');
+    toasts = toasts.filter(function(t){ return t.uid !== uid; });
+    sessionStorage.setItem('toasts', JSON.stringify(toasts));
+    renderToasts();
+  }
+
+  renderToasts();
+
+  setInterval(function(){
+    var toasts = JSON.parse(sessionStorage.getItem('toasts') || '[]');
+    var now = Date.now();
+    var filtered = toasts.filter(function(t){ return now - t.ts < 8000; });
+    if (filtered.length !== toasts.length) {
+      sessionStorage.setItem('toasts', JSON.stringify(filtered));
+      renderToasts();
+    }
+  }, 500);
 })();
 </script>
 </body>
@@ -517,7 +559,9 @@ def review(uid: str, verdict: str):
     conn = _conn()
     try:
         row = conn.execute(
-            "SELECT action FROM decisions WHERE email_uid = ?", (uid,)
+            "SELECT d.action, e.subject FROM decisions d "
+            "LEFT JOIN emails e ON e.uid = d.email_uid "
+            "WHERE d.email_uid = ?", (uid,)
         ).fetchone()
         if not row:
             abort(404)
@@ -531,9 +575,24 @@ def review(uid: str, verdict: str):
             toast = "red"
         else:
             toast = "yellow"
+        subject = row["subject"] or ""
     finally:
         conn.close()
-    return redirect(url_for("log", toast=toast))
+    return redirect(url_for("log", toast=toast, uid=uid, subject=subject))
+
+
+@app.route("/review/<path:uid>/undo", methods=["POST"])
+def review_undo(uid: str):
+    if not CALIBRATE:
+        abort(403)
+    conn = _conn()
+    try:
+        conn.execute("UPDATE decisions SET reviewed = NULL WHERE email_uid = ?", (uid,))
+        conn.commit()
+    finally:
+        conn.close()
+    from flask import jsonify
+    return jsonify(ok=True)
 
 
 _CALIBRATION_TMPL = (
