@@ -49,12 +49,14 @@ def parse_args() -> argparse.Namespace:
 
 def _record_decision(conn_db, uid: str, action: str, score: int | None,
                      rule_id: str | None, reason: str, delay_hours: int, now: str) -> None:
+    row = conn_db.execute("SELECT reviewed FROM decisions WHERE email_uid = ?", (uid,)).fetchone()
+    reviewed = row["reviewed"] if row else None
     conn_db.execute("DELETE FROM decisions WHERE email_uid = ?", (uid,))
     conn_db.execute("DELETE FROM rule_hits WHERE email_uid = ?", (uid,))
     conn_db.execute(
-        "INSERT INTO decisions (email_uid, action, score, rule_id, reason, delay_hours, decided_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (uid, action, score, rule_id, reason, delay_hours, now),
+        "INSERT INTO decisions (email_uid, action, score, rule_id, reason, delay_hours, decided_at, reviewed) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (uid, action, score, rule_id, reason, delay_hours, now, reviewed),
     )
     if rule_id:
         conn_db.execute(
