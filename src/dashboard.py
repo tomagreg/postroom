@@ -142,7 +142,7 @@ _BASE = """\
       undo.textContent = 'Annuler';
       undo.style.cssText = 'font-size:.75rem;padding:.15rem .4rem;flex-shrink:0;background:#fff5;border:1px solid currentColor;border-radius:3px;cursor:pointer;color:inherit';
       undo.onclick = function() {
-        fetch('/review/' + encodeURIComponent(t.uid) + '/undo', {method:'POST'})
+        fetch('/review/' + t.uid + '/undo', {method:'POST'})
           .then(function(){ removeToast(t.uid); });
       };
       div.appendChild(subj);
@@ -152,7 +152,7 @@ _BASE = """\
   }
 
   window.doReview = function(uid, verdict, subject, spanId) {
-    fetch('/review/' + encodeURIComponent(uid) + '/' + verdict, {method:'POST'})
+    fetch('/review/' + uid + '/' + verdict, {method:'POST'})
       .then(function(r){ return r.json(); })
       .then(function(data) {
         var span = document.getElementById(spanId);
