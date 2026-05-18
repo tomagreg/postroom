@@ -26,6 +26,12 @@ import db as db_module
 
 app = Flask(__name__)
 DB_PATH = ROOT / "postroom.db"
+CALIBRATE = False
+
+
+@app.context_processor
+def _inject_calibrate():
+    return {"calibrate": CALIBRATE}
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -84,6 +90,11 @@ _BASE = """\
   .stat-card { background: #fff; border-radius: 6px; box-shadow: 0 1px 3px #0001; padding: 1rem; text-align: center; }
   .stat-card .num { font-size: 2rem; font-weight: 700; }
   .stat-card .lbl { font-size: .8rem; color: #666; margin-top: .25rem; }
+  .calibrate-toggle { margin-left: auto; }
+  .calibrate-toggle form { margin: 0; }
+  .btn-toggle { font-size: .8rem; padding: .3rem .8rem; border-radius: 4px; border: 1px solid; cursor: pointer; font-weight: 600; }
+  .btn-toggle.off { background: transparent; border-color: #555; color: #888; }
+  .btn-toggle.on  { background: #ffd580; border-color: #ffd580; color: #1a1a2e; }
 </style>
 </head>
 <body>
@@ -95,7 +106,15 @@ _BASE = """\
     <a href="{{ url_for('promos') }}">Promos</a>
     <a href="{{ url_for('social') }}">Réseau</a>
     <a href="{{ url_for('stats') }}">Stats</a>
+    {% if calibrate %}<a href="{{ url_for('calibration') }}" style="color:#ffd580">⚙ Calibration</a>{% endif %}
   </nav>
+  <div class="calibrate-toggle">
+    <form method="post" action="{{ url_for('toggle_calibrate') }}">
+      <button type="submit" class="btn-toggle {{ 'on' if calibrate else 'off' }}">
+        Calibrate {{ 'ON' if calibrate else 'OFF' }}
+      </button>
+    </form>
+  </div>
 </header>
 <main>
 {% block content %}{% endblock %}
@@ -112,10 +131,11 @@ _LOG_TMPL = (
   <thead><tr>
     <th>Date</th><th>Compte</th><th>Expéditeur</th><th>Objet</th>
     <th>Action</th><th>Score</th><th>LLM</th><th>Règle</th><th>Raison</th>
+    {% if calibrate %}<th>Revue</th>{% endif %}
   </tr></thead>
   <tbody>
   {% for r in rows %}
-  <tr>
+  <tr{% if calibrate and r.reviewed %} style="opacity:.6"{% endif %}>
     <td style="white-space:nowrap">{{ r.decided_at[:16].replace("T"," ") }}</td>
     <td>{{ r.account }}</td>
     <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ r.sender }}">{{ r.sender }}</td>
@@ -125,6 +145,20 @@ _LOG_TMPL = (
     <td style="text-align:center">{% if r.rule_id == 'llm' %}<span title="Classifié par LLM">🤖</span>{% endif %}</td>
     <td class="rule">{{ r.rule_id or "" }}</td>
     <td class="reason" title="{{ r.reason }}">{{ r.reason }}</td>
+    {% if calibrate %}
+    <td style="white-space:nowrap">
+      {% if r.reviewed %}
+        <span class="badge {{ r.reviewed }}">{{ r.reviewed }}</span>
+      {% else %}
+        <form class="inline" method="post" action="{{ url_for('review', uid=r.email_uid, verdict='keep') }}">
+          <button class="btn-done" type="submit" style="padding:.15rem .4rem;font-size:.75rem">✓</button>
+        </form>
+        <form class="inline" method="post" action="{{ url_for('review', uid=r.email_uid, verdict='delete') }}">
+          <button type="submit" style="background:#fee;color:#c00;border:none;border-radius:4px;padding:.15rem .4rem;font-size:.75rem;cursor:pointer">🗑</button>
+        </form>
+      {% endif %}
+    </td>
+    {% endif %}
   </tr>
   {% endfor %}
   </tbody>
@@ -253,20 +287,39 @@ def index():
     return redirect(url_for("log"))
 
 
+@app.route("/calibrate/toggle", methods=["POST"])
+def toggle_calibrate():
+    global CALIBRATE
+    CALIBRATE = not CALIBRATE
+    return redirect(request.referrer or url_for("log"))
+
+
 @app.route("/log")
 def log():
     limit = request.args.get("limit", 100, type=int)
     conn = _conn()
     try:
-        rows = _rows(conn, """
-            SELECT d.decided_at, d.email_uid,
-                   e.account, e.sender, e.subject,
-                   d.action, d.score, d.rule_id, d.reason
-            FROM decisions d
-            LEFT JOIN emails e ON e.uid = d.email_uid
-            ORDER BY d.decided_at DESC
-            LIMIT ?
-        """, (limit,))
+        if CALIBRATE:
+            rows = _rows(conn, """
+                SELECT d.decided_at, d.email_uid, d.reviewed,
+                       e.account, e.sender, e.subject,
+                       d.action, d.score, d.rule_id, d.reason
+                FROM decisions d
+                LEFT JOIN emails e ON e.uid = d.email_uid
+                WHERE d.reviewed IS NULL
+                ORDER BY d.decided_at DESC
+                LIMIT ?
+            """, (limit,))
+        else:
+            rows = _rows(conn, """
+                SELECT d.decided_at, d.email_uid, d.reviewed,
+                       e.account, e.sender, e.subject,
+                       d.action, d.score, d.rule_id, d.reason
+                FROM decisions d
+                LEFT JOIN emails e ON e.uid = d.email_uid
+                ORDER BY d.reviewed ASC, d.decided_at DESC
+                LIMIT ?
+            """, (limit,))
     finally:
         conn.close()
     return render_template_string(_LOG_TMPL, rows=rows)
@@ -433,6 +486,100 @@ def promo_delete(item_id: int):
     if not affected:
         abort(404)
     return redirect(url_for("promos"))
+
+
+@app.route("/review/<path:uid>/<verdict>", methods=["POST"])
+def review(uid: str, verdict: str):
+    if not CALIBRATE:
+        abort(403)
+    if verdict not in ("keep", "delete"):
+        abort(400)
+    now = datetime.now(timezone.utc).isoformat()
+    conn = _conn()
+    try:
+        row = conn.execute(
+            "SELECT action FROM decisions WHERE email_uid = ?", (uid,)
+        ).fetchone()
+        if not row:
+            abort(404)
+        conn.execute("UPDATE decisions SET reviewed = ? WHERE email_uid = ?", (verdict, uid))
+        if verdict == "delete" and row["action"] in ("delete", "review"):
+            conn.execute("UPDATE decisions SET delay_hours = 0 WHERE email_uid = ?", (uid,))
+        conn.commit()
+    finally:
+        conn.close()
+    return redirect(url_for("log"))
+
+
+_CALIBRATION_TMPL = (
+    _BASE.replace("{% block content %}{% endblock %}", """\
+<p class="section-title">Désaccords pipeline / humain</p>
+<p style="font-size:.8rem;color:#888;margin-top:-.25rem">
+  Mails où ta décision diffère de l'action du pipeline — à utiliser pour affiner les règles.
+</p>
+{% if rows %}
+<table>
+  <thead><tr>
+    <th>Date</th><th>Compte</th><th>Expéditeur</th><th>Objet</th>
+    <th>Pipeline</th><th>Humain</th><th>LLM</th><th>Règle</th><th>Raison</th>
+  </tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr>
+    <td style="white-space:nowrap">{{ r.decided_at[:16].replace("T"," ") }}</td>
+    <td>{{ r.account }}</td>
+    <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ r.sender }}">{{ r.sender }}</td>
+    <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ r.subject }}">{{ r.subject }}</td>
+    <td><span class="badge {{ r.action }}">{{ r.action }}</span></td>
+    <td><span class="badge {{ r.reviewed }}">{{ r.reviewed }}</span></td>
+    <td style="text-align:center">{% if r.rule_id == 'llm' %}🤖{% endif %}</td>
+    <td class="rule">{{ r.rule_id or "" }}</td>
+    <td class="reason" title="{{ r.reason }}">{{ r.reason }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p style="font-size:.8rem;color:#888;margin-top:.75rem">
+  {{ rows|length }} désaccord(s) — {{ agree_count }} accord(s) enregistré(s)
+</p>
+{% else %}
+<div class="empty">Aucun désaccord — les règles sont bien calibrées.</div>
+{% endif %}
+""")
+)
+
+
+@app.route("/calibration")
+def calibration():
+    if not CALIBRATE:
+        abort(403)
+    conn = _conn()
+    try:
+        rows = _rows(conn, """
+            SELECT d.decided_at, d.email_uid, d.action, d.reviewed,
+                   d.rule_id, d.reason, e.account, e.sender, e.subject
+            FROM decisions d
+            LEFT JOIN emails e ON e.uid = d.email_uid
+            WHERE d.reviewed IS NOT NULL
+              AND (
+                (d.reviewed = 'keep'   AND d.action IN ('delete','review'))
+                OR
+                (d.reviewed = 'delete' AND d.action = 'keep')
+              )
+            ORDER BY d.decided_at DESC
+        """)
+        agree_count = conn.execute("""
+            SELECT COUNT(*) FROM decisions
+            WHERE reviewed IS NOT NULL
+              AND (
+                (reviewed = 'keep'   AND action = 'keep')
+                OR
+                (reviewed = 'delete' AND action IN ('delete','review'))
+              )
+        """).fetchone()[0]
+    finally:
+        conn.close()
+    return render_template_string(_CALIBRATION_TMPL, rows=rows, agree_count=agree_count)
 
 
 @app.route("/stats")
