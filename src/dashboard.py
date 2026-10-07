@@ -730,6 +730,8 @@ def stats():
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="postroom dashboard")
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="adresse d’écoute (défaut : locale seulement ; pas d’authentification, ne pas exposer)")
     parser.add_argument("--port", type=int, default=5002)
     parser.add_argument("--db", type=Path, default=ROOT / "postroom.db")
     return parser.parse_args()
@@ -738,4 +740,4 @@ def _parse_args() -> argparse.Namespace:
 if __name__ == "__main__":
     args = _parse_args()
     DB_PATH = args.db
-    app.run(host="0.0.0.0", port=args.port, debug=False)
+    app.run(host=args.host, port=args.port, debug=False)
