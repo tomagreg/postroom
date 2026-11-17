@@ -141,7 +141,7 @@ def cmd_trier(args) -> int:
     con = db.connecter()
     db.migrer(con)
     debut = time.monotonic()
-    r = trier(con, args.compte, refaire=args.refaire, limite=args.limite)
+    r = trier(con, args.compte, refaire=args.refaire, limite=args.limite, categorie=args.categorie)
     j = r.jetons
     print(f"{args.compte} : {r.a_trier} mails à trier, {r.tries} triés en {time.monotonic() - debut:.0f} s "
           f"(passage {r.passage_id})")
@@ -200,6 +200,7 @@ def main(argv=None) -> int:
     p.add_argument("--compte", choices=list(COMPTES), required=True)
     p.add_argument("--limite", type=int, help="au plus N mails (les plus récents)")
     p.add_argument("--refaire", action="store_true", help="retrie aussi les mails déjà triés (sauf corrigés)")
+    p.add_argument("--categorie", help="retrie seulement les mails de cette catégorie (retenue ou proposée par l'IA)")
     p.set_defaults(func=cmd_trier)
     p = sous.add_parser("rapport-tri", help="répartition, coût et échantillon à relire")
     p.add_argument("--compte", choices=list(COMPTES), required=True)

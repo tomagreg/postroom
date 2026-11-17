@@ -10,7 +10,9 @@ from postroom import db
 from postroom.tri import ia
 from postroom.tri.decision import action_prevue, trier
 from postroom.tri.rapport import rapport
-from postroom.tri.regles import LISTE_BLANCHE, Regle, appliquer, domaine
+from postroom.tri import categories as cats
+from postroom.tri.categories import LISTE_BLANCHE
+from postroom.tri.regles import Regle, appliquer, domaine
 
 
 def R(id_, type_, valeur, categorie, groupe="g", etat="active"):
@@ -72,41 +74,51 @@ def test_exception_domaine_neutralise_son_groupe():
 # --- sortie de l'IA ----------------------------------------------------------
 
 
+def _tri():
+    c = db.connecter(":memory:")
+    db.migrer(c)
+    return ia.Tri.depuis(cats.charger(c))
+
+
+TRI = _tri()
+
+
 def _sortie(**kw):
     d = dict(categorie="commande", confiance=92, priorite="aucune", resume="Colis expédié.", lien=1,
-             peremption="", boutique="Amazon", numero_commande="402-1", etape_commande=2, date_evenement="")
+             peremption="", boutique="Amazon", numero_commande="402-1", etape_commande=2, date_evenement="",
+             entreprise="", poste="", reference="", statut_candidature="")
     d.update(kw)
     return d
 
 
 def test_valider_commande():
-    cat, conf, prio, ext = ia.valider(_sortie(), nb_liens=2)
+    cat, conf, prio, ext = ia.valider(_sortie(), 2, TRI)
     assert (cat, conf, prio) == ("commande", 92, None)
     assert ext == {"resume": "Colis expédié.", "lien": 1, "boutique": "Amazon", "numero": "402-1", "etape": 2}
 
 
 def test_valider_categorie_hors_liste():
     with pytest.raises(ia.ErreurIA):
-        ia.valider(_sortie(categorie="a_trier"), 0)
+        ia.valider(_sortie(categorie="a_trier"), 0, TRI)
     with pytest.raises(ia.ErreurIA):
-        ia.valider(_sortie(categorie="supprimer_tout"), 0)
+        ia.valider(_sortie(categorie="supprimer_tout"), 0, TRI)
 
 
 def test_valider_lien_hors_liste_et_bornes():
-    _, conf, _, ext = ia.valider(_sortie(lien=5, confiance=140), nb_liens=2)
+    _, conf, _, ext = ia.valider(_sortie(lien=5, confiance=140), 2, TRI)
     assert ext["lien"] is None and conf == 100
-    _, _, _, ext = ia.valider(_sortie(lien=-1), nb_liens=2)
+    _, _, _, ext = ia.valider(_sortie(lien=-1), 2, TRI)
     assert ext["lien"] is None
 
 
 def test_valider_priorite_et_dates():
-    _, _, prio, _ = ia.valider(_sortie(categorie="a_repondre", priorite="haute"), 0)
+    _, _, prio, _ = ia.valider(_sortie(categorie="a_repondre", priorite="haute"), 0, TRI)
     assert prio == "haute"
-    _, _, prio, _ = ia.valider(_sortie(categorie="offre", priorite="haute"), 0)
+    _, _, prio, _ = ia.valider(_sortie(categorie="offre", priorite="haute"), 0, TRI)
     assert prio is None
-    _, _, _, ext = ia.valider(_sortie(categorie="evenement", date_evenement="2026-12-03"), 0)
+    _, _, _, ext = ia.valider(_sortie(categorie="evenement", date_evenement="2026-12-03"), 0, TRI)
     assert ext["date"] == "2026-12-03"
-    _, _, _, ext = ia.valider(_sortie(categorie="alerte", peremption="bientôt"), 0)
+    _, _, _, ext = ia.valider(_sortie(categorie="alerte", peremption="bientôt"), 0, TRI)
     assert ext["peremption"] is None
 
 
@@ -201,7 +213,7 @@ def test_trier(con):
     assert len(client.appels) == 4
     appel = client.appels[0]
     assert appel["model"] == "claude-haiku-5-5"
-    assert appel["output_config"]["format"]["schema"]["properties"]["categorie"]["enum"] == list(ia.CATEGORIES_IA)
+    assert appel["output_config"]["format"]["schema"]["properties"]["categorie"]["enum"] == list(TRI.categories)
     d = _decisions(con)
     assert "Envoyé" not in d
     assert (d["Code"]["source"], d["Code"]["categorie_auto"], d["Code"]["action"]) == ("regle", "code_unique", "suppression")
@@ -245,10 +257,22 @@ def test_panne_reseau(con):
 
 
 def test_action_prevue():
-    assert action_prevue("a_repondre", True) == "garder"
-    assert action_prevue("a_trier", False) == "garder"
-    assert action_prevue("recu_paiement", True) == "conserves"
-    assert action_prevue("offre", False) == "suppression"
+    c = cats.charger(_con_memoire())
+    assert action_prevue(c["a_repondre"], True) == "garder"
+    assert action_prevue(c["a_trier"], False) == "garder"
+    assert action_prevue(None, False) == "garder"
+    assert action_prevue(c["recu_paiement"], True) == "conserves"
+    assert action_prevue(c["offre"], False) == "suppression"
+    assert action_prevue(c["candidature"], False, {"statut": "refus"}) == "suppression"
+    for statut in ("entretien", "test", "proposition"):
+        assert action_prevue(c["candidature"], False, {"statut": statut}) == "garder"
+    assert action_prevue(c["candidature"], False, {"statut": "suggestion"}) == "suppression"
+
+
+def _con_memoire():
+    c = db.connecter(":memory:")
+    db.migrer(c)
+    return c
 
 
 def test_rapport(con):
@@ -300,7 +324,7 @@ def test_abonnement(con, tmp_path, monkeypatch):
     commande, env = faux.appels[0]
     assert commande[:2] == ["claude", "-p"] and "--restricted" in commande
     assert commande[commande.index("--tools") + 1] == "" and commande[commande.index("--model") + 1] == ia.MODELE
-    assert json.loads(commande[commande.index("--json-schema") + 1]) == ia.SCHEMA
+    assert json.loads(commande[commande.index("--json-schema") + 1]) == TRI.schema
     assert "--no-session-persistence" in commande
     assert "ANTHROPIC_API_KEY" not in env and "CLAUDE_CODE_SIMPLE" not in env
     assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "jeton-test" and env["CLAUDE_CONFIG_DIR"].endswith("claude")
@@ -324,4 +348,69 @@ def test_abonnement_limite_arrete_le_passage(con, tmp_path, monkeypatch):
 
 def test_abonnement_sans_jeton(tmp_path):
     m = ia.MoteurAbonnement(jeton="", executable="claude", dossier=tmp_path, executer=None)
-    assert m.appeler("x").erreur == "appel : CLAUDE_CODE_OAUTH_TOKEN absent"
+    assert m.appeler("x", TRI).erreur == "appel : CLAUDE_CODE_OAUTH_TOKEN absent"
+
+
+# --- catégories en base -------------------------------------------------------
+
+
+def test_categories_et_rubriques_en_base():
+    c = _con_memoire()
+    categories = cats.charger(c)
+    assert {"candidature", "a_trier", "liste_blanche"} <= set(categories)
+    assert categories["candidature"].rubrique == "applications" and categories["candidature"].sort == "suppression"
+    assert "a_trier" not in TRI.categories and "liste_blanche" not in TRI.categories
+    assert dict(c.execute("SELECT cle, nom FROM rubriques"))["applications"] == "Candidatures"
+    assert "Indeed" in TRI.consigne and "- candidature :" in TRI.consigne
+
+
+def test_nouvelle_categorie_sans_code(tmp_path):
+    """Une ligne de plus dans categories : l'IA la reçoit (consigne et liste fermée)."""
+    c = _con_memoire()
+    c.execute("INSERT INTO rubriques (cle, nom, page) VALUES ('assos', 'Associations', 'notifs')")
+    c.execute("""INSERT INTO categories (cle, nom, description, sort, comportement, rubrique)
+                 VALUES ('association', 'Association', 'vie associative du club de voile', 'suppression', 'simple', 'assos')""")
+    c.execute("UPDATE categories SET active = 0 WHERE cle = 'cgu'")
+    tri = ia.Tri.depuis(cats.charger(c))
+    assert "association" in tri.schema["properties"]["categorie"]["enum"]
+    assert "cgu" not in tri.schema["properties"]["categorie"]["enum"]
+    assert "- association : vie associative" in tri.consigne
+    cat, _, _, ext = ia.valider(_sortie(categorie="association"), 2, tri)
+    assert cat == "association" and set(ext) == {"resume", "lien"}
+
+
+def test_candidature():
+    cat, _, prio, ext = ia.valider(_sortie(categorie="candidature", entreprise="SPIE", poste="Stage Data",
+                                           reference="R-12", statut_candidature="entretien",
+                                           date_evenement="2026-11-20"), 0, TRI)
+    assert cat == "candidature" and prio is None
+    assert ext == {"resume": "Colis expédié.", "lien": None, "entreprise": "SPIE", "poste": "Stage Data",
+                   "reference": "R-12", "statut": "entretien", "date": "2026-11-20"}
+
+
+def test_expediteur_adresse_exacte():
+    regles = [R(1, "expediteur", "noreply@linkedin.com", "social"), R(2, "expediteur", "noreply@", "autre_supprime")]
+    assert appliquer(regles, "LinkedIn <noreply@linkedin.com>", "", "").regle.id == 1
+    # security-noreply@linkedin.com n'est plus pris pour noreply@linkedin.com
+    assert appliquer(regles, "LinkedIn <security-noreply@linkedin.com>", "", "").regle.id == 2
+
+
+def test_regle_vers_categorie_inactive_ignoree(con):
+    con.execute("UPDATE categories SET active = 0 WHERE cle = 'code_unique'")
+    con.commit()
+    _mail(con, 1, "a@b.fr", "Code", "Votre code de vérification : 1")
+    r = trier(con, "perso1", moteur=ia.MoteurAPI(FauxClient({"Code": _sortie(categorie="autre_supprime")})))
+    assert (r.par_regle, r.par_ia) == (0, 1)
+
+
+def test_retrier_une_categorie(con):
+    reponses = _peupler(con)
+    trier(con, "perso1", moteur=ia.MoteurAPI(FauxClient(reponses)))
+    client = FauxClient(reponses)
+    r = trier(con, "perso1", moteur=ia.MoteurAPI(client), categorie="offre")
+    # « Douteux » : sous le seuil, proposé offre par l'IA ; les autres décisions ne bougent pas
+    assert r.a_trier == 1 and len(client.appels) == 1
+
+
+def test_a_repondre_prime_sur_candidature():
+    assert "au sujet d'un stage ou d'une candidature" in TRI.categories["a_repondre"].description

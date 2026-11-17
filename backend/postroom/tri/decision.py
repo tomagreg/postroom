@@ -10,16 +10,22 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from postroom.db import maintenant
+from postroom.tri import categories as cats
 from postroom.tri import ia
 from postroom.tri.regles import Correspondance, appliquer, charger
 
-GARDER = ("a_repondre", "a_trier")
 APPELS_SIMULTANES = 4
+# statuts de candidature qui demandent une action de Toma : le mail reste dans la boîte
+CANDIDATURE_A_GARDER = ("entretien", "test", "proposition")
 
 
-def action_prevue(categorie: str, a_pj: bool) -> str:
-    """garder (reste dans la boîte) · conserves (vraie pièce jointe) · suppression (§ 5 du plan)."""
-    if categorie in GARDER:
+def action_prevue(categorie: cats.Categorie | None, a_pj: bool, extraction: dict | None = None) -> str:
+    """garder (reste dans la boîte) · conserves (vraie pièce jointe) · suppression (§ 5 du plan).
+    Le sort vient de la catégorie ; une candidature qui demande une action (entretien, test,
+    proposition) reste dans la boîte."""
+    if categorie is None or categorie.sort == "garder":
+        return "garder"
+    if categorie.comportement == "candidature" and (extraction or {}).get("statut") in CANDIDATURE_A_GARDER:
         return "garder"
     return "conserves" if a_pj else "suppression"
 
@@ -45,16 +51,23 @@ class RapportTri:
     detail_erreurs: dict = field(default_factory=dict)
 
 
-def mails_a_trier(con, compte: str, refaire: bool = False, limite: int | None = None) -> list[dict]:
-    """Mails reçus encore dans la boîte, sans décision ou dont l'IA a échoué
-    (avec `refaire` : toutes les décisions non corrigées par Toma)."""
-    condition = "d.id IS NULL OR d.erreur IS NOT NULL" + (" OR d.corrige_le IS NULL" if refaire else "")
+def mails_a_trier(con, compte: str, refaire: bool = False, limite: int | None = None,
+                  categorie: str | None = None) -> list[dict]:
+    """Mails reçus encore dans la boîte, sans décision ou dont l'IA a échoué (avec `refaire` :
+    toutes les décisions non corrigées par Toma ; avec `categorie` : seulement les décisions non
+    corrigées de cette catégorie, retenue ou proposée par l'IA sous le seuil)."""
+    params: list = [compte]
+    if categorie:
+        condition = "d.corrige_le IS NULL AND (d.categorie_auto = ? OR d.categorie_ia = ?)"
+        params += [categorie, categorie]
+    else:
+        condition = "d.id IS NULL OR d.erreur IS NOT NULL" + (" OR d.corrige_le IS NULL" if refaire else "")
     lignes = con.execute(
         f"""SELECT m.id, m.compte, m.expediteur, m.objet, m.date, m.corps_texte, m.liens, m.a_pj
             FROM mails m LEFT JOIN decisions d ON d.mail_id = m.id
             WHERE m.compte = ? AND m.dossier = 'principal' AND m.emplacement = 'inbox' AND ({condition})
             ORDER BY m.date DESC""" + (" LIMIT ?" if limite else ""),
-        (compte, limite) if limite else (compte,),
+        (*params, limite) if limite else params,
     ).fetchall()
     mails = [dict(l) for l in lignes]
     for m in mails:
@@ -64,20 +77,22 @@ def mails_a_trier(con, compte: str, refaire: bool = False, limite: int | None = 
     return mails
 
 
-def _enregistrer(con, mail: dict, c: Correspondance, r: ia.ResultatIA | None, seuil_: int, passage_id: int) -> str:
+def _enregistrer(con, mail: dict, c: Correspondance, r: ia.ResultatIA | None, seuil_: int, passage_id: int,
+                 categories: dict[str, cats.Categorie]) -> str:
     proposees = json.dumps([p.id for p in c.proposees]) if c.proposees else None
     if r is None:  # règle active
         valeurs = dict(categorie_auto=c.regle.categorie, categorie_ia=None, source="regle", regle_id=c.regle.id,
                        confiance=100, priorite=None, extraction=None, erreur=None)
     elif r.erreur:
-        valeurs = dict(categorie_auto="a_trier", categorie_ia=None, source="ia", regle_id=None,
+        valeurs = dict(categorie_auto=cats.A_TRIER, categorie_ia=None, source="ia", regle_id=None,
                        confiance=None, priorite=None, extraction=None, erreur=r.erreur)
     else:
-        auto = r.categorie if r.confiance >= seuil_ else "a_trier"
+        auto = r.categorie if r.confiance >= seuil_ else cats.A_TRIER
         valeurs = dict(categorie_auto=auto, categorie_ia=r.categorie, source="ia", regle_id=None,
-                       confiance=r.confiance, priorite=r.priorite if auto == "a_repondre" else None,
+                       confiance=r.confiance, priorite=r.priorite if auto != cats.A_TRIER else None,
                        extraction=json.dumps(r.extraction, ensure_ascii=False), erreur=None)
-    valeurs["action"] = action_prevue(valeurs["categorie_auto"], bool(mail["a_pj"]))
+    valeurs["action"] = action_prevue(categories.get(valeurs["categorie_auto"]), bool(mail["a_pj"]),
+                                      r.extraction if r is not None and not r.erreur else None)
     con.execute(
         """INSERT INTO decisions (mail_id, categorie_auto, categorie_ia, source, regle_id, confiance, priorite,
              action, extraction, regles_proposees, passage_id, erreur, decide_le)
@@ -95,12 +110,15 @@ def _enregistrer(con, mail: dict, c: Correspondance, r: ia.ResultatIA | None, se
 
 
 def trier(con: sqlite3.Connection, compte: str, moteur=None, refaire: bool = False,
-          limite: int | None = None) -> RapportTri:
+          limite: int | None = None, categorie: str | None = None) -> RapportTri:
     """Trie les mails reçus de `compte` et note le passage (jetons compris). Si la limite de
     l'abonnement est atteinte, les mails restants attendent le passage suivant."""
-    regles = charger(con)
+    categories = cats.charger(con)
+    tri = ia.Tri.depuis(categories)
+    # une règle vers une catégorie inactive ou inconnue ne décide pas
+    regles = [r for r in charger(con) if r.categorie in categories]
     seuil_ = seuil(con)
-    mails = mails_a_trier(con, compte, refaire, limite)
+    mails = mails_a_trier(con, compte, refaire, limite, categorie)
     rapport = RapportTri(a_trier=len(mails))
     analyses = [(m, appliquer(regles, m["expediteur"], m["objet"], m["corps_texte"])) for m in mails]
     pour_ia = [(m, c) for m, c in analyses if c.regle is None]
@@ -114,7 +132,7 @@ def trier(con: sqlite3.Connection, compte: str, moteur=None, refaire: bool = Fal
 
     for m, c in analyses:
         if c.regle is not None:
-            _enregistrer(con, m, c, None, seuil_, rapport.passage_id)
+            _enregistrer(con, m, c, None, seuil_, rapport.passage_id, categories)
             rapport.par_regle += 1
             rapport.tries += 1
 
@@ -124,7 +142,7 @@ def trier(con: sqlite3.Connection, compte: str, moteur=None, refaire: bool = Fal
         if arret.is_set():
             return None
         try:
-            return ia.classer(moteur, mc[0], mc[1].liste_blanche)
+            return ia.classer(moteur, mc[0], mc[1].liste_blanche, tri)
         except ia.LimiteAtteinte as e:
             arret.set()
             return e
@@ -138,7 +156,7 @@ def trier(con: sqlite3.Connection, compte: str, moteur=None, refaire: bool = Fal
                         rapport.limite = str(r) or "limite atteinte"
                     continue
                 rapport.jetons.ajouter(r.jetons)
-                categorie = _enregistrer(con, m, c, r, seuil_, rapport.passage_id)
+                categorie = _enregistrer(con, m, c, r, seuil_, rapport.passage_id, categories)
                 if r.erreur:
                     rapport.erreurs += 1
                     rapport.detail_erreurs[r.erreur] = rapport.detail_erreurs.get(r.erreur, 0) + 1

@@ -11,26 +11,8 @@ import yaml
 
 from postroom import config
 from postroom.db import maintenant
+from postroom.tri.categories import LISTE_BLANCHE
 
-# Liste fermée des catégories (plan v2, § 5). L'IA ne peut choisir que parmi elles.
-CATEGORIES = (
-    "a_repondre",
-    "commande",
-    "evenement",
-    "alerte",
-    "offre",
-    "social",
-    "recu_paiement",
-    "mouvement_bancaire",
-    "code_unique",
-    "cgu",
-    "bienvenue",
-    "suivi_obsolete",
-    "autre_supprime",
-    "a_trier",
-)
-# Liste blanche : jamais envoyé en Suppression par une règle, toujours examiné par l'IA.
-LISTE_BLANCHE = "liste_blanche"
 
 # règle v1 -> (catégorie v2, état). Les règles trop larges, qui enverraient en Suppression
 # des commandes ou des événements, sont seulement proposées (tranché au jalon 8).
@@ -45,6 +27,11 @@ CORRESPONDANCE_V1 = {
     "review_delete": ("autre_supprime", "active"),
     "social_pending": ("social", "active"),
 }
+
+
+# groupes dont les mots-clés ne sont cherchés que dans l'objet (« promo » ou « réduction » dans le
+# corps attrapaient des reçus et des certifications)
+MOTS_CLES_OBJET = {"promo_pending"}
 
 
 @dataclass
@@ -62,7 +49,8 @@ def regles_v1(regles: dict, liste_blanche: dict) -> tuple[list[tuple], list[str]
         categorie, etat = CORRESPONDANCE_V1.get(groupe, ("a_trier", "proposee"))
         avant = len(lignes)
         # la v1 cherchait les mots-clés dans l'objet et le début du corps
-        lignes += [("mot_cle", v, categorie, groupe, etat) for v in r.get("keywords") or []]
+        type_mot_cle = "mot_cle_objet" if groupe in MOTS_CLES_OBJET else "mot_cle"
+        lignes += [(type_mot_cle, v, categorie, groupe, etat) for v in r.get("keywords") or []]
         lignes += [("expediteur", v, categorie, groupe, etat) for v in r.get("senders") or []]
         lignes += [("exception_domaine", v, categorie, groupe, etat) for v in r.get("except_domains") or []]
         if len(lignes) == avant:
@@ -146,9 +134,12 @@ def _dans_domaine(dom: str, valeur: str) -> bool:
     return bool(dom) and (dom == valeur or dom.endswith("." + valeur))
 
 
-def correspond(r: Regle, expediteur: str, dom: str, objet: str, texte: str) -> bool:
+def correspond(r: Regle, expediteur: str, adresse: str, dom: str, objet: str, texte: str) -> bool:
     v = r.valeur.lower()
     if r.type == "expediteur":
+        # adresse complète : égalité stricte ; morceau (« noreply@ », « duolingo ») : contenu
+        if "@" in v and not v.startswith("@") and not v.endswith("@"):
+            return v == adresse
         return v in expediteur
     if r.type == "domaine":
         return _dans_domaine(dom, v)
@@ -163,6 +154,7 @@ def appliquer(regles: list[Regle], expediteur: str | None, objet: str | None, co
     """Liste blanche d'abord (le mail ira toujours à l'IA), puis la première règle active qui
     correspond ; une exception de domaine neutralise les règles de son groupe."""
     exp = (expediteur or "").lower()
+    adresse = parseaddr(expediteur or "")[1].lower()
     dom = domaine(expediteur)
     obj = (objet or "").lower()
     texte = f"{obj} {(corps or '')[:APERCU_CORPS].lower()}"
@@ -173,7 +165,7 @@ def appliquer(regles: list[Regle], expediteur: str | None, objet: str | None, co
         key=lambda r: (ORDRE_TYPES.index(r.type), r.id),
     )
     for r in candidates:
-        if not correspond(r, exp, dom, obj, texte):
+        if not correspond(r, exp, adresse, dom, obj, texte):
             continue
         if r.categorie == LISTE_BLANCHE:
             resultat.liste_blanche = True

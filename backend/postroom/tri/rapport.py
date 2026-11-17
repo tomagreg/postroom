@@ -108,7 +108,7 @@ def _echantillon(con, compte: str, base: str, taille: int, graine: int) -> str:
             detail.append(f"IA : {l['categorie_ia']}")
         if l["priorite"]:
             detail.append(f"priorité {l['priorite']}")
-        for cle in ("boutique", "numero", "etape", "date", "peremption"):
+        for cle in ("entreprise", "poste", "statut", "boutique", "numero", "etape", "date", "peremption"):
             if ext.get(cle):
                 detail.append(f"{cle} {ext[cle]}")
         detail.append(f"→ {l['action']}" + (" (PJ)" if l["a_pj"] else ""))

@@ -4,7 +4,8 @@ import pytest
 import yaml
 
 from postroom import config, db
-from postroom.tri.regles import CATEGORIES, LISTE_BLANCHE, importer, regles_v1
+from postroom.tri.categories import LISTE_BLANCHE
+from postroom.tri.regles import importer, regles_v1
 
 TABLES = {
     "comptes", "mails", "pieces_jointes", "decisions", "elements", "commandes", "envoyes", "flux",
@@ -21,9 +22,9 @@ def con(tmp_path):
 
 def test_migrations_rejouables(tmp_path):
     c = db.connecter(tmp_path / "t.db")
-    assert db.migrer(c) == [1, 2]
+    assert db.migrer(c) == [1, 2, 3, 4]
     assert db.migrer(c) == []
-    assert db.version(c) == 2
+    assert db.version(c) == 4
     tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert TABLES <= tables
     assert c.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
@@ -56,13 +57,14 @@ def test_contraintes(con):
         con.execute("INSERT INTO mails (compte, dossier, gmail_msgid, vu_le) VALUES ('inconnu', 'principal', 1, 'x')")
 
 
-def test_regles_v1_du_depot():
+def test_regles_v1_du_depot(con):
     """Les vrais rules.yaml et whitelist.yaml : chaque règle v1 a sa correspondance."""
     regles = yaml.safe_load(config.FICHIER_REGLES.read_text(encoding="utf-8"))
     blanche = yaml.safe_load(config.FICHIER_LISTE_BLANCHE.read_text(encoding="utf-8"))
     lignes, ignorees = regles_v1(regles, blanche)
     categories = {l[2] for l in lignes}
-    assert categories <= set(CATEGORIES) | {LISTE_BLANCHE}
+    assert categories <= {r[0] for r in con.execute("SELECT cle FROM categories")}
+    assert not [l for l in lignes if l[3] == "promo_pending" and l[0] == "mot_cle"]  # objet seulement
     assert "a_trier" not in categories  # aucune règle v1 inconnue
     par_groupe = {}
     for type_, _, categorie, groupe, etat in lignes:
