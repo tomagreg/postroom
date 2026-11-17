@@ -21,9 +21,9 @@ def con(tmp_path):
 
 def test_migrations_rejouables(tmp_path):
     c = db.connecter(tmp_path / "t.db")
-    assert db.migrer(c) == [1]
+    assert db.migrer(c) == [1, 2]
     assert db.migrer(c) == []
-    assert db.version(c) == 1
+    assert db.version(c) == 2
     tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert TABLES <= tables
     assert c.execute("PRAGMA journal_mode").fetchone()[0] == "wal"

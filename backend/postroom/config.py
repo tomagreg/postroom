@@ -17,6 +17,7 @@ DOSSIER_DONNEES = RACINE / "data"
 FICHIER_REGLES = RACINE / "config" / "rules.yaml"
 FICHIER_LISTE_BLANCHE = RACINE / "config" / "whitelist.yaml"
 FUSEAU = ZoneInfo("Europe/Paris")
+EXECUTABLE_CLAUDE = os.environ.get("POSTROOM_CLAUDE") or "/root/.local/bin/claude"
 
 # clé -> (nom affiché, fournisseur), dans l'ordre d'ajout prévu au jalon 9.
 # cours (Microsoft 365 d'Efrei) est transférée vers perso1 et lue dans un libellé Gmail (jalon 0).
@@ -89,6 +90,24 @@ def charger_comptes(fichier: Path = FICHIER_COMPTES) -> dict[str, Compte]:
                 source, cle=cle, nom=c.nom, fournisseur=source.fournisseur, via=c.via, dossier=c.dossier
             )
     return comptes
+
+
+def cle_anthropic(fichier: Path = FICHIER_COMPTES) -> str:
+    """Clé de l'API Anthropic (ANTHROPIC_API_KEY de accounts.env, sinon de l'environnement)."""
+    valeurs = dotenv_values(fichier) if fichier.exists() else {}
+    return (valeurs.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+
+
+def jeton_abonnement(fichier: Path = FICHIER_COMPTES) -> str:
+    """Jeton de l'abonnement Claude (CLAUDE_CODE_OAUTH_TOKEN de accounts.env, sinon de l'environnement)."""
+    valeurs = dotenv_values(fichier) if fichier.exists() else {}
+    return (valeurs.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or "").strip()
+
+
+def moteur_ia(fichier: Path = FICHIER_COMPTES) -> str:
+    """IA_MOTEUR de accounts.env : abonnement (claude -p, par défaut) ou api (clé, facturée au jeton)."""
+    valeurs = dotenv_values(fichier) if fichier.exists() else {}
+    return "api" if (valeurs.get("IA_MOTEUR") or "").strip().lower() == "api" else "abonnement"
 
 
 def libelles_exclus(cle: str, comptes: dict[str, Compte]) -> set[str]:

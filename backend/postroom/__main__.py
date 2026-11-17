@@ -124,6 +124,57 @@ def cmd_etat(args) -> int:
     return 0
 
 
+def cmd_trier(args) -> int:
+    import time
+
+    from postroom import db
+    from postroom.config import cle_anthropic, jeton_abonnement, moteur_ia
+    from postroom.tri import ia
+    from postroom.tri.decision import trier
+
+    if moteur_ia() == "api" and not cle_anthropic():
+        print("IA_MOTEUR=api mais ANTHROPIC_API_KEY absente de accounts.env")
+        return 1
+    if moteur_ia() == "abonnement" and not jeton_abonnement():
+        print("CLAUDE_CODE_OAUTH_TOKEN (jeton de l'abonnement, comme pour RogerLeJardinier) absent de accounts.env")
+        return 1
+    con = db.connecter()
+    db.migrer(con)
+    debut = time.monotonic()
+    r = trier(con, args.compte, refaire=args.refaire, limite=args.limite)
+    j = r.jetons
+    print(f"{args.compte} : {r.a_trier} mails à trier, {r.tries} triés en {time.monotonic() - debut:.0f} s "
+          f"(passage {r.passage_id})")
+    print(f"    par règle {r.par_regle}, par l'IA {r.par_ia} (dont {r.sous_seuil} sous le seuil), erreurs {r.erreurs}")
+    for erreur, n in r.detail_erreurs.items():
+        print(f"    erreur : {erreur} ×{n}")
+    if r.limite:
+        print(f"    limite de l'abonnement atteinte, {r.non_tries} mails laissés pour le passage suivant : {r.limite}")
+    print(f"    jetons : {j.entree} entrée, {j.sortie} sortie, {j.cache_ecrits} cache écrits, {j.cache_lus} cache lus"
+          f" ; {'équivalent API' if r.moteur == 'abonnement' else 'coût'} {j.cout():.4f} $ ({ia.MODELE}, {r.moteur})")
+    return 1 if r.erreurs or r.limite else 0
+
+
+def cmd_rapport_tri(args) -> int:
+    from datetime import datetime
+
+    from postroom import config, db
+    from postroom.tri.rapport import rapport
+
+    con = db.connecter()
+    db.migrer(con)
+    resume, echantillon = rapport(con, args.compte, args.echantillon)
+    print(resume)
+    print()
+    print(echantillon)
+    dossier = config.DOSSIER_DONNEES / "rapports"
+    dossier.mkdir(parents=True, exist_ok=True)
+    fichier = dossier / f"tri-{args.compte}-{datetime.now(config.FUSEAU):%Y-%m-%d-%H%M}.txt"
+    fichier.write_text(f"{resume}\n\n{echantillon}\n", encoding="utf-8")
+    print(f"\nrapport écrit dans {fichier}")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="postroom")
     sous = parser.add_subparsers(dest="commande", required=True)
@@ -145,6 +196,15 @@ def main(argv=None) -> int:
     p.set_defaults(func=cmd_scan)
     p = sous.add_parser("etat", help="résumé de la base")
     p.set_defaults(func=cmd_etat)
+    p = sous.add_parser("trier", help="trie les mails reçus (règles, puis IA) ; rien ne touche la boîte")
+    p.add_argument("--compte", choices=list(COMPTES), required=True)
+    p.add_argument("--limite", type=int, help="au plus N mails (les plus récents)")
+    p.add_argument("--refaire", action="store_true", help="retrie aussi les mails déjà triés (sauf corrigés)")
+    p.set_defaults(func=cmd_trier)
+    p = sous.add_parser("rapport-tri", help="répartition, coût et échantillon à relire")
+    p.add_argument("--compte", choices=list(COMPTES), required=True)
+    p.add_argument("--echantillon", type=int, default=40)
+    p.set_defaults(func=cmd_rapport_tri)
     args = parser.parse_args(argv)
     return args.func(args)
 
