@@ -86,7 +86,7 @@ TRI = _tri()
 def _sortie(**kw):
     d = dict(categorie="commande", confiance=92, priorite="aucune", resume="Colis expédié.", lien=1,
              peremption="", boutique="Amazon", numero_commande="402-1", etape_commande=2, date_evenement="",
-             entreprise="", poste="", reference="", statut_candidature="")
+             entreprise="", poste="", reference="", statut_candidature="", expediteur_personne=False)
     d.update(kw)
     return d
 
@@ -94,7 +94,8 @@ def _sortie(**kw):
 def test_valider_commande():
     cat, conf, prio, ext = ia.valider(_sortie(), 2, TRI)
     assert (cat, conf, prio) == ("commande", 92, None)
-    assert ext == {"resume": "Colis expédié.", "lien": 1, "boutique": "Amazon", "numero": "402-1", "etape": 2}
+    assert ext == {"resume": "Colis expédié.", "lien": 1, "personne": False, "boutique": "Amazon", "numero": "402-1",
+                   "etape": 2}
 
 
 def test_valider_categorie_hors_liste():
@@ -267,6 +268,9 @@ def test_action_prevue():
     for statut in ("entretien", "test", "proposition"):
         assert action_prevue(c["candidature"], False, {"statut": statut}) == "garder"
     assert action_prevue(c["candidature"], False, {"statut": "suggestion"}) == "suppression"
+    # écrite par une personne (Toma en copie, par exemple) : gardée
+    assert action_prevue(c["candidature"], False, {"statut": "envoyee", "personne": True}) == "garder"
+    assert action_prevue(c["offre"], False, {"personne": True}) == "suppression"
 
 
 def _con_memoire():
@@ -376,15 +380,15 @@ def test_nouvelle_categorie_sans_code(tmp_path):
     assert "cgu" not in tri.schema["properties"]["categorie"]["enum"]
     assert "- association : vie associative" in tri.consigne
     cat, _, _, ext = ia.valider(_sortie(categorie="association"), 2, tri)
-    assert cat == "association" and set(ext) == {"resume", "lien"}
+    assert cat == "association" and set(ext) == {"resume", "lien", "personne"}
 
 
 def test_candidature():
     cat, _, prio, ext = ia.valider(_sortie(categorie="candidature", entreprise="SPIE", poste="Stage Data",
                                            reference="R-12", statut_candidature="entretien",
-                                           date_evenement="2026-11-20"), 0, TRI)
+                                           date_evenement="2026-11-20", expediteur_personne=True), 0, TRI)
     assert cat == "candidature" and prio is None
-    assert ext == {"resume": "Colis expédié.", "lien": None, "entreprise": "SPIE", "poste": "Stage Data",
+    assert ext == {"resume": "Colis expédié.", "lien": None, "personne": True, "entreprise": "SPIE", "poste": "Stage Data",
                    "reference": "R-12", "statut": "entretien", "date": "2026-11-20"}
 
 

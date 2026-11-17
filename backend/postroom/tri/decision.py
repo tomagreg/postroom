@@ -22,10 +22,13 @@ CANDIDATURE_A_GARDER = ("entretien", "test", "proposition")
 def action_prevue(categorie: cats.Categorie | None, a_pj: bool, extraction: dict | None = None) -> str:
     """garder (reste dans la boîte) · conserves (vraie pièce jointe) · suppression (§ 5 du plan).
     Le sort vient de la catégorie ; une candidature qui demande une action (entretien, test,
-    proposition) reste dans la boîte."""
+    proposition) ou écrite par une personne reste dans la boîte."""
     if categorie is None or categorie.sort == "garder":
         return "garder"
-    if categorie.comportement == "candidature" and (extraction or {}).get("statut") in CANDIDATURE_A_GARDER:
+    extraction = extraction or {}
+    if categorie.comportement == "candidature" and (
+        extraction.get("statut") in CANDIDATURE_A_GARDER or extraction.get("personne")
+    ):
         return "garder"
     return "conserves" if a_pj else "suppression"
 

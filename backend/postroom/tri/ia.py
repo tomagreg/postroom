@@ -54,8 +54,11 @@ elle est indiquée ; sinon "".
 - boutique, numero_commande, etape_commande : pour {commande} seulement (étape 1 commandée, \
 2 expédiée, 3 en cours de livraison, 4 livrée) ; sinon "", "" et 0.
 - entreprise, poste, reference, statut_candidature : pour {candidature} seulement ; statut \
-« suggestion » (offre suggérée par un site), « envoyee », « recue » (accusé de réception), \
-« test », « entretien », « refus », « proposition » ou « autre » ; sinon "", "", "" et "".
+« suggestion » (offre suggérée par un site), « envoyee », « recue » (accusé de réception, ou \
+confirmation d'un test déjà passé), « test » (test ou évaluation encore à passer), « entretien », \
+« refus », « proposition » ou « autre » ; sinon "", "", "" et "".
+- expediteur_personne : true si le mail est écrit par une personne (même si Toma n'est qu'en \
+copie), false si c'est un envoi automatique (plateforme, notification, newsletter).
 - date_evenement : pour {evenement}, la date (AAAA-MM-JJ) de l'événement, de l'entretien ou du \
 test ; sinon ""."""
 
@@ -88,6 +91,7 @@ def schema(categories: list[Categorie]) -> dict:
         "confiance": {"type": "integer"},
         "priorite": {"type": "string", "enum": list(PRIORITES)},
         "lien": {"type": "integer"},
+        "expediteur_personne": {"type": "boolean"},
         "etape_commande": {"type": "integer", "enum": [0, 1, 2, 3, 4]},
         "statut_candidature": {"type": "string", "enum": ["", *STATUTS_CANDIDATURE]},
         **{c: {"type": "string"} for c in CHAMPS_TEXTE},
@@ -189,7 +193,8 @@ def valider(donnees: dict, nb_liens: int, tri: Tri) -> tuple[str, int, str | Non
     priorite = priorite if comportement == "reponse" and priorite in PRIORITES[:3] else None
     lien = donnees.get("lien")
     lien = lien if isinstance(lien, int) and 0 <= lien < min(nb_liens, LIENS_MAX) else None
-    extraction = {"resume": _texte(donnees, "resume", 300) or "", "lien": lien}
+    extraction = {"resume": _texte(donnees, "resume", 300) or "", "lien": lien,
+                  "personne": donnees.get("expediteur_personne") is True}
     if comportement in ("alerte", "offre"):
         extraction["peremption"] = _date(donnees.get("peremption"))
     if comportement == "commande":
