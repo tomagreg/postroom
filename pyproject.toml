@@ -20,5 +20,8 @@ dev = ["pytest>=8.0"]
 [tool.setuptools.packages.find]
 where = ["backend"]
 
+[tool.setuptools.package-data]
+postroom = ["migrations/*.sql"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests/backend"]

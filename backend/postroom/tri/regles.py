@@ -1,1 +1,103 @@
-"""Règles et liste blanche en base. Jalon 1 (reprise) et 2."""
+"""Règles déterministes : catégories v2 et reprise des règles v1 (rules.yaml, whitelist.yaml).
+
+L'application des règles aux mails arrive au jalon 2.
+"""
+
+import sqlite3
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import yaml
+
+from postroom import config
+from postroom.db import maintenant
+
+# Liste fermée des catégories (plan v2, § 5). L'IA ne peut choisir que parmi elles.
+CATEGORIES = (
+    "a_repondre",
+    "commande",
+    "evenement",
+    "alerte",
+    "offre",
+    "social",
+    "recu_paiement",
+    "mouvement_bancaire",
+    "code_unique",
+    "cgu",
+    "bienvenue",
+    "suivi_obsolete",
+    "autre_supprime",
+    "a_trier",
+)
+# Liste blanche : jamais envoyé en Suppression par une règle, toujours examiné par l'IA.
+LISTE_BLANCHE = "liste_blanche"
+
+# règle v1 -> (catégorie v2, état). Les règles trop larges, qui enverraient en Suppression
+# des commandes ou des événements, sont seulement proposées (tranché au jalon 8).
+CORRESPONDANCE_V1 = {
+    "otp_codes": ("code_unique", "active"),
+    "notifications_auto": ("autre_supprime", "proposee"),
+    "tracking_delivered": ("suivi_obsolete", "proposee"),
+    "newsletters_inactive": ("autre_supprime", "proposee"),
+    "promo_pending": ("offre", "active"),
+    "booking_past": ("evenement", "proposee"),
+    "daily_digests": ("autre_supprime", "active"),
+    "review_delete": ("autre_supprime", "active"),
+    "social_pending": ("social", "active"),
+}
+
+
+@dataclass
+class RapportImport:
+    ajoutees: int = 0
+    deja_presentes: int = 0
+    ignorees: list[str] = field(default_factory=list)
+
+
+def regles_v1(regles: dict, liste_blanche: dict) -> tuple[list[tuple], list[str]]:
+    """YAML v1 -> lignes (type, valeur, catégorie, groupe, état), et règles non reprises."""
+    lignes, ignorees = [], []
+    for r in regles.get("rules") or []:
+        groupe = r.get("id", "")
+        categorie, etat = CORRESPONDANCE_V1.get(groupe, ("a_trier", "proposee"))
+        avant = len(lignes)
+        # la v1 cherchait les mots-clés dans l'objet et le début du corps
+        lignes += [("mot_cle", v, categorie, groupe, etat) for v in r.get("keywords") or []]
+        lignes += [("expediteur", v, categorie, groupe, etat) for v in r.get("senders") or []]
+        lignes += [("exception_domaine", v, categorie, groupe, etat) for v in r.get("except_domains") or []]
+        if len(lignes) == avant:
+            ignorees.append(f"{groupe} (conditions sans valeur, non reprises)")
+    noire = regles.get("blacklist") or {}
+    lignes += [("expediteur", v, "autre_supprime", "blacklist", "active") for v in noire.get("senders") or []]
+    lignes += [("domaine", v, "autre_supprime", "blacklist", "active") for v in noire.get("domains") or []]
+    blanche = liste_blanche.get("whitelist") or {}
+    lignes += [("domaine", v, LISTE_BLANCHE, "whitelist", "active") for v in blanche.get("domains") or []]
+    lignes += [("expediteur", v, LISTE_BLANCHE, "whitelist", "active") for v in blanche.get("senders") or []]
+    lignes += [("mot_cle_objet", v, LISTE_BLANCHE, "whitelist", "active") for v in blanche.get("keywords_subject") or []]
+    return [l for l in lignes if str(l[1]).strip()], ignorees
+
+
+def importer(
+    con: sqlite3.Connection,
+    fichier_regles: Path = config.FICHIER_REGLES,
+    fichier_liste_blanche: Path = config.FICHIER_LISTE_BLANCHE,
+) -> RapportImport:
+    """Charge les règles v1 dans `regles` (origine migrée) ; relançable sans doublon."""
+    regles = yaml.safe_load(fichier_regles.read_text(encoding="utf-8")) or {}
+    blanche = yaml.safe_load(fichier_liste_blanche.read_text(encoding="utf-8")) or {}
+    lignes, ignorees = regles_v1(regles, blanche)
+    rapport = RapportImport(ignorees=ignorees)
+    quand = maintenant()
+    for type_, valeur, categorie, groupe, etat in lignes:
+        cur = con.execute(
+            """INSERT INTO regles (type, valeur, categorie, groupe, origine, etat, cree_le)
+               VALUES (?, ?, ?, ?, 'migree', ?, ?)
+               ON CONFLICT (type, valeur, categorie, groupe) DO NOTHING""",
+            (type_, str(valeur), categorie, groupe, etat, quand),
+        )
+        if cur.rowcount:
+            rapport.ajoutees += 1
+        else:
+            rapport.deja_presentes += 1
+    con.commit()
+    return rapport

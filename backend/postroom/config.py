@@ -4,6 +4,7 @@ Les identifiants viennent de config/accounts.env (jamais versionné) ; seuls les
 noms affichés et les fournisseurs sont dans le code.
 """
 
+import os
 from dataclasses import dataclass, replace
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -13,17 +14,25 @@ from dotenv import dotenv_values
 RACINE = Path(__file__).resolve().parents[2]
 FICHIER_COMPTES = RACINE / "config" / "accounts.env"
 DOSSIER_DONNEES = RACINE / "data"
+FICHIER_REGLES = RACINE / "config" / "rules.yaml"
+FICHIER_LISTE_BLANCHE = RACINE / "config" / "whitelist.yaml"
 FUSEAU = ZoneInfo("Europe/Paris")
 
-# clé -> (nom affiché, fournisseur), dans l'ordre d'ajout prévu au jalon 9
+# clé -> (nom affiché, fournisseur), dans l'ordre d'ajout prévu au jalon 9.
+# cours (Microsoft 365 d'Efrei) est transférée vers perso1 et lue dans un libellé Gmail (jalon 0).
 COMPTES = {
     "perso1": ("Principale", "gmail"),
     "perso2": ("Secondaire", "gmail"),
     "voile": ("Cap Efrei", "gmail"),
-    "cours": ("Cours", "outlook"),
+    "cours": ("Cours", "gmail"),
 }
 
 HOTES_EXEMPLE = {"", "imap.example.com"}
+
+
+def fichier_base() -> Path:
+    """Base SQLite : POSTROOM_DB, sinon data/postroom.db."""
+    return Path(os.environ.get("POSTROOM_DB") or DOSSIER_DONNEES / "postroom.db")
 
 
 @dataclass(frozen=True)
@@ -80,3 +89,8 @@ def charger_comptes(fichier: Path = FICHIER_COMPTES) -> dict[str, Compte]:
                 source, cle=cle, nom=c.nom, fournisseur=source.fournisseur, via=c.via, dossier=c.dossier
             )
     return comptes
+
+
+def libelles_exclus(cle: str, comptes: dict[str, Compte]) -> set[str]:
+    """Libellés de cette boîte qui appartiennent à une boîte transférée (perso1 : celui de cours)."""
+    return {c.dossier for c in comptes.values() if c.via == cle and c.dossier != "INBOX"}
