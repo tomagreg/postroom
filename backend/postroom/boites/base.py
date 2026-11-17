@@ -7,7 +7,7 @@ import base64
 import imaplib
 import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from postroom.config import Compte
 
@@ -33,6 +33,34 @@ def decoder_utf7(nom: str) -> str:
             resultat.append(nom[i])
             i += 1
     return "".join(resultat)
+
+
+def encoder_utf7(nom: str) -> str:
+    """Encode un nom de dossier en UTF-7 modifié (inverse de decoder_utf7)."""
+    resultat, tampon = [], []
+
+    def vider():
+        if tampon:
+            b64 = base64.b64encode("".join(tampon).encode("utf-16-be")).decode().rstrip("=")
+            resultat.append("&" + b64.replace("/", ",") + "-")
+            tampon.clear()
+
+    for car in nom:
+        if 0x20 <= ord(car) <= 0x7E:
+            vider()
+            resultat.append("&-" if car == "&" else car)
+        else:
+            tampon.append(car)
+    vider()
+    return "".join(resultat)
+
+
+def nom_imap(dossier: str) -> str:
+    """Nom de dossier prêt pour une commande IMAP : UTF-7 modifié, entre guillemets si besoin."""
+    if dossier == "INBOX":
+        return dossier
+    encode = encoder_utf7(dossier).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{encode}"'
 
 
 def analyser_list(lignes: list[bytes]) -> dict[str, str]:
@@ -69,10 +97,61 @@ def ouvrir_imap(compte: Compte, *, delai: float = 30) -> imaplib.IMAP4_SSL:
     return imap
 
 
+class ErreurEcriture(RuntimeError):
+    """Commande IMAP qui modifierait la boîte, refusée en lecture seule."""
+
+
+class LectureSeule:
+    """Enveloppe d'une connexion imaplib qui ne laisse passer que la lecture.
+
+    Jusqu'au jalon 4, aucune commande ne peut modifier une boîte : SELECT est refusé
+    (EXAMINE seulement), UID n'accepte que SEARCH et FETCH, et FETCH n'accepte que
+    BODY.PEEK (qui ne pose pas \\Seen).
+    """
+
+    PERMISES = {"capability", "list", "response", "noop", "logout"}
+
+    def __init__(self, imap):
+        self._imap = imap
+
+    def select(self, dossier="INBOX", readonly=False):
+        if not readonly:
+            raise ErreurEcriture("SELECT refusé : EXAMINE uniquement")
+        return self._imap.select(dossier, readonly=True)
+
+    def uid(self, commande, *args):
+        commande = commande.upper()
+        if commande not in ("SEARCH", "FETCH"):
+            raise ErreurEcriture(f"UID {commande} refusé en lecture seule")
+        if commande == "FETCH":
+            elements = " ".join(str(a) for a in args[1:]).upper()
+            if re.search(r"BODY\[|RFC822(?![.]SIZE)", elements.replace("BODY.PEEK[", "")):
+                raise ErreurEcriture("FETCH sans PEEK refusé (poserait \\Seen)")
+        return self._imap.uid(commande, *args)
+
+    def __getattr__(self, nom):
+        if nom in self.PERMISES:
+            return getattr(self._imap, nom)
+        raise ErreurEcriture(f"{nom} refusé en lecture seule")
+
+
 @dataclass
 class EtatBoite:
     messages: int
     uidvalidity: int
+
+
+@dataclass
+class Brut:
+    """Un message tel que lu sur la boîte, avant analyse."""
+
+    uid: int
+    gmail_msgid: int
+    thread_id: str | None = None
+    libelles: list[str] = field(default_factory=list)
+    taille: int | None = None
+    date_interne: str | None = None  # INTERNALDATE, ISO UTC
+    contenu: bytes | None = None
 
 
 class Boite(ABC):
@@ -86,6 +165,18 @@ class Boite(ABC):
 
     @abstractmethod
     def examiner(self, dossier: str = "INBOX") -> EtatBoite: ...
+
+    @abstractmethod
+    def uids_depuis(self, jour) -> list[int]:
+        """UID du dossier examiné reçus depuis ce jour (datetime.date)."""
+
+    @abstractmethod
+    def identifier(self, uids: list[int]) -> list[Brut]:
+        """Identifiants et libellés seulement (lecture légère, sans contenu)."""
+
+    @abstractmethod
+    def lire(self, uids: list[int]) -> list[Brut]:
+        """Messages complets, sans changer leur état (BODY.PEEK)."""
 
     @abstractmethod
     def fermer(self) -> None: ...
