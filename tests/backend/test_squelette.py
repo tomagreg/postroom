@@ -120,3 +120,17 @@ def test_ouvrir_imap_oauth2(fichier_comptes, monkeypatch):
         "mecanisme": "XOAUTH2",
         "chaine": b"user=b@example.org\x01auth=Bearer JETON\x01\x01",
     }
+
+
+def test_boite_transferee(tmp_path):
+    f = tmp_path / "accounts.env"
+    f.write_text(
+        "PERSO1_HOST=imap.gmail.com\nPERSO1_USER=a@example.org\nPERSO1_PASS=secret\n"
+        "COURS_HOST=imap.example.com\nCOURS_VIA=perso1\nCOURS_DOSSIER=cours\n"
+    )
+    cours = charger_comptes(f)["cours"]
+    assert cours.configure and cours.nom == "Cours" and cours.fournisseur == "gmail"
+    assert (cours.hote, cours.utilisateur, cours.dossier) == ("imap.gmail.com", "a@example.org", "cours")
+    imap = FausseImap()
+    assert verifier(cours, ouvrir=lambda c: imap).statut == "ok"
+    assert imap.selections == [('"cours"', True)]

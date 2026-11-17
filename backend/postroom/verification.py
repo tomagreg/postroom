@@ -33,9 +33,10 @@ def verifier(compte: Compte, ouvrir=ouvrir_imap) -> Resultat:
         capacites = (brut.decode() if isinstance(brut, bytes) else str(brut)).split()
         typ, lignes = imap.list()
         speciaux = analyser_list(lignes) if typ == "OK" else {}
-        typ, donnees = imap.select("INBOX", readonly=True)  # EXAMINE
+        dossier = compte.dossier if compte.dossier == "INBOX" else f'"{compte.dossier}"'
+        typ, donnees = imap.select(dossier, readonly=True)  # EXAMINE
         if typ != "OK":
-            return Resultat(compte.cle, "erreur", f"EXAMINE INBOX : {_message(donnees)}")
+            return Resultat(compte.cle, "erreur", f"EXAMINE {compte.dossier} : {_message(donnees)}")
         _, uv = imap.response("UIDVALIDITY")
         return Resultat(
             compte.cle,

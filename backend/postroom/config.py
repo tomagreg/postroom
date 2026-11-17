@@ -4,7 +4,7 @@ Les identifiants viennent de config/accounts.env (jamais versionné) ; seuls les
 noms affichés et les fournisseurs sont dans le code.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -38,6 +38,8 @@ class Compte:
     auth: str = "motdepasse"  # motdepasse · oauth2
     client_id: str = ""
     tenant: str = ""
+    via: str = ""  # boîte qui reçoit les mails transférés (cours -> perso1)
+    dossier: str = "INBOX"  # dossier ou libellé lu
 
     @property
     def configure(self) -> bool:
@@ -51,7 +53,8 @@ class Compte:
 
 def charger_comptes(fichier: Path = FICHIER_COMPTES) -> dict[str, Compte]:
     """Lit accounts.env (PERSO1_HOST, PERSO1_USER, PERSO1_PASS ; pour OAuth2 :
-    COURS_AUTH=oauth2, COURS_CLIENT_ID, COURS_TENANT)."""
+    COURS_AUTH=oauth2, COURS_CLIENT_ID, COURS_TENANT ; pour une boîte transférée :
+    COURS_VIA=perso1, COURS_DOSSIER=cours, qui reprend les identifiants de perso1)."""
     valeurs = dotenv_values(fichier) if fichier.exists() else {}
     comptes = {}
     for cle, (nom, fournisseur) in COMPTES.items():
@@ -67,5 +70,13 @@ def charger_comptes(fichier: Path = FICHIER_COMPTES) -> dict[str, Compte]:
             auth=(valeurs.get(f"{p}_AUTH") or "motdepasse").strip(),
             client_id=(valeurs.get(f"{p}_CLIENT_ID") or "").strip(),
             tenant=(valeurs.get(f"{p}_TENANT") or "").strip(),
+            via=(valeurs.get(f"{p}_VIA") or "").strip(),
+            dossier=(valeurs.get(f"{p}_DOSSIER") or "INBOX").strip(),
         )
+    for cle, c in comptes.items():
+        source = comptes.get(c.via)
+        if source and not source.via:
+            comptes[cle] = replace(
+                source, cle=cle, nom=c.nom, fournisseur=source.fournisseur, via=c.via, dossier=c.dossier
+            )
     return comptes

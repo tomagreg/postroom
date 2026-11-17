@@ -15,9 +15,10 @@ def cmd_verifier_boites(args) -> int:
     for cle in cles:
         c = comptes[cle]
         r = verifier(c)
-        print(f"{cle} ({c.nom}, {c.fournisseur}) : {r.statut}" + (f" — {r.detail}" if r.detail else ""))
+        via = f", via {c.via}" if c.via else ""
+        print(f"{cle} ({c.nom}, {c.fournisseur}{via}) : {r.statut}" + (f" — {r.detail}" if r.detail else ""))
         if r.statut == "ok":
-            print(f"    INBOX : {r.messages} messages, UIDVALIDITY {r.uidvalidity}")
+            print(f"    {c.dossier} : {r.messages} messages, UIDVALIDITY {r.uidvalidity}")
             for usage, nom in sorted(r.speciaux.items()):
                 print(f"    {usage:8} {nom}")
             print(f"    capacités : {' '.join(r.capacites) or '—'}")
