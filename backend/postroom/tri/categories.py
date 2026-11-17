@@ -22,15 +22,16 @@ class Categorie:
     rubrique: str | None
     flux: str | None
     choix_ia: bool
+    duree_jours: int | None = None  # durée de vie des éléments (vide : réglage)
 
 
 def charger(con: sqlite3.Connection) -> dict[str, Categorie]:
     """Catégories actives, dans l'ordre d'affichage."""
     lignes = con.execute(
-        """SELECT cle, nom, description, sort, comportement, rubrique, flux, choix_ia
+        """SELECT cle, nom, description, sort, comportement, rubrique, flux, choix_ia, duree_jours
            FROM categories WHERE active = 1 ORDER BY ordre, cle"""
     ).fetchall()
-    return {l[0]: Categorie(*l[:7], bool(l[7])) for l in lignes}
+    return {l[0]: Categorie(*l[:7], bool(l[7]), l[8]) for l in lignes}
 
 
 def pour_ia(categories: dict[str, Categorie]) -> list[Categorie]:

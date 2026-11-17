@@ -175,6 +175,79 @@ def cmd_rapport_tri(args) -> int:
     return 0
 
 
+def _adresses() -> set[str]:
+    """Adresses de Toma (identifiants des boîtes et adresses connues en base), sans « +étiquette »."""
+    from postroom import db
+    from postroom.elements.commun import adresse
+
+    adresses = {adresse(c.utilisateur) for c in charger_comptes().values() if c.utilisateur}
+    con = db.connecter()
+    adresses |= {adresse(a) for (a,) in con.execute("SELECT adresse FROM comptes WHERE adresse IS NOT NULL")}
+    return {a for a in adresses if a}
+
+
+def cmd_synchroniser(args) -> int:
+    from postroom import db
+    from postroom.boites.gmail import BoiteGmail
+    from postroom.config import libelles_exclus
+    from postroom.elements.synchro import presence
+    from postroom.ingestion import scanner
+
+    comptes = charger_comptes()
+    compte = comptes[args.compte]
+    if not compte.configure:
+        print(f"{args.compte} : identifiants absents de accounts.env")
+        return 1
+    con = db.connecter()
+    db.migrer(con)
+    boite = BoiteGmail(compte)
+    try:
+        rapports = scanner(con, compte, boite, args.jours, exclus=libelles_exclus(compte.cle, comptes),
+                           afficher=lambda _: None)
+        r = presence(con, compte, boite)
+    finally:
+        boite.fermer()
+    nouveaux = ", ".join(f"{x.dossier} {x.ajoutes}" for x in rapports)
+    print(f"{compte.cle} : nouveaux mails ({nouveaux}) ; boîte de réception : {r.verifies} vérifiés, "
+          f"{r.presents} présents, {r.partis} partis (archivés ou supprimés dans Gmail), {r.revenus} revenus")
+    return 1 if any(x.erreurs for x in rapports) else 0
+
+
+def cmd_elements(args) -> int:
+    from postroom import db
+    from postroom.elements import construire
+
+    adresses = _adresses()
+    con = db.connecter()
+    db.migrer(con)
+    r = construire(con, args.compte, adresses, refaire=args.refaire)
+    detail = ", ".join(f"{k} {n}" for k, n in sorted(r.par_comportement.items())) or "aucune"
+    print(f"{args.compte} : {r.traites} décisions transformées ({detail})")
+    print(f"    À répondre : {r.reponses}")
+    print(f"    En attente : {r.attentes}")
+    print(f"    expirations : {r.expirations}")
+    return 0
+
+
+def cmd_rapport_elements(args) -> int:
+    from datetime import datetime, timezone
+
+    from postroom import config, db
+    from postroom.elements.rapport import rapport
+
+    con = db.connecter()
+    db.migrer(con)
+    quand = datetime.now(timezone.utc)
+    texte = rapport(con, args.compte, quand)
+    print(texte)
+    dossier = config.DOSSIER_DONNEES / "rapports"
+    dossier.mkdir(parents=True, exist_ok=True)
+    fichier = dossier / f"elements-{args.compte}-{quand.astimezone(config.FUSEAU):%Y-%m-%d-%H%M}.txt"
+    fichier.write_text(texte + "\n", encoding="utf-8")
+    print(f"\nrapport écrit dans {fichier}")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="postroom")
     sous = parser.add_subparsers(dest="commande", required=True)
@@ -206,6 +279,17 @@ def main(argv=None) -> int:
     p.add_argument("--compte", choices=list(COMPTES), required=True)
     p.add_argument("--echantillon", type=int, default=40)
     p.set_defaults(func=cmd_rapport_tri)
+    p = sous.add_parser("synchroniser", help="nouveaux mails et présence dans la boîte (lecture seule)")
+    p.add_argument("--compte", choices=list(COMPTES), required=True)
+    p.add_argument("--jours", type=int, default=30)
+    p.set_defaults(func=cmd_synchroniser)
+    p = sous.add_parser("elements", help="transforme les décisions en éléments et lignes de Flux ; rien ne touche la boîte")
+    p.add_argument("--compte", choices=list(COMPTES), required=True)
+    p.add_argument("--refaire", action="store_true", help="repart de zéro pour ce compte (éléments, Flux, envois)")
+    p.set_defaults(func=cmd_elements)
+    p = sous.add_parser("rapport-elements", help="éléments par type, suivis et Flux, sans corps de mail")
+    p.add_argument("--compte", choices=list(COMPTES), required=True)
+    p.set_defaults(func=cmd_rapport_elements)
     args = parser.parse_args(argv)
     return args.func(args)
 
