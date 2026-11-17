@@ -7,3 +7,9 @@ __pycache__/
 *.pyc
 .env
 data/
+
+# v2
+.venv/
+*.egg-info/
+frontend/node_modules/
+frontend/dist/
