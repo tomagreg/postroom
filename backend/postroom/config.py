@@ -35,17 +35,23 @@ class Compte:
     utilisateur: str
     mot_de_passe: str = ""
     port: int = 993
+    auth: str = "motdepasse"  # motdepasse · oauth2
+    client_id: str = ""
+    tenant: str = ""
 
     @property
     def configure(self) -> bool:
-        return self.hote not in HOTES_EXEMPLE and bool(self.utilisateur)
+        if self.hote in HOTES_EXEMPLE or not self.utilisateur:
+            return False
+        return bool(self.client_id) if self.auth == "oauth2" else bool(self.mot_de_passe)
 
     def __repr__(self) -> str:  # jamais le mot de passe
         return f"Compte({self.cle!r}, {self.hote!r})"
 
 
 def charger_comptes(fichier: Path = FICHIER_COMPTES) -> dict[str, Compte]:
-    """Lit accounts.env (variables PERSO1_HOST, PERSO1_USER, PERSO1_PASS...)."""
+    """Lit accounts.env (PERSO1_HOST, PERSO1_USER, PERSO1_PASS ; pour OAuth2 :
+    COURS_AUTH=oauth2, COURS_CLIENT_ID, COURS_TENANT)."""
     valeurs = dotenv_values(fichier) if fichier.exists() else {}
     comptes = {}
     for cle, (nom, fournisseur) in COMPTES.items():
@@ -58,5 +64,8 @@ def charger_comptes(fichier: Path = FICHIER_COMPTES) -> dict[str, Compte]:
             utilisateur=(valeurs.get(f"{p}_USER") or "").strip(),
             mot_de_passe=valeurs.get(f"{p}_PASS") or "",
             port=int(valeurs.get(f"{p}_PORT") or 993),
+            auth=(valeurs.get(f"{p}_AUTH") or "motdepasse").strip(),
+            client_id=(valeurs.get(f"{p}_CLIENT_ID") or "").strip(),
+            tenant=(valeurs.get(f"{p}_TENANT") or "").strip(),
         )
     return comptes

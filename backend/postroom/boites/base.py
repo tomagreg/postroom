@@ -55,7 +55,15 @@ def analyser_list(lignes: list[bytes]) -> dict[str, str]:
 
 
 def ouvrir_imap(compte: Compte, *, delai: float = 30) -> imaplib.IMAP4_SSL:
-    """Connexion TLS authentifiée (mot de passe d'application ; OAuth2 au besoin plus tard)."""
+    """Connexion TLS authentifiée : mot de passe d'application, ou XOAUTH2 (Microsoft 365)."""
+    if compte.auth == "oauth2":
+        from postroom.boites.oauth import jeton
+
+        acces = jeton(compte)  # avant d'ouvrir la connexion : erreur claire si pas de jeton
+        imap = imaplib.IMAP4_SSL(compte.hote, compte.port, timeout=delai)
+        chaine = f"user={compte.utilisateur}\x01auth=Bearer {acces}\x01\x01".encode()
+        imap.authenticate("XOAUTH2", lambda _: chaine)
+        return imap
     imap = imaplib.IMAP4_SSL(compte.hote, compte.port, timeout=delai)
     imap.login(compte.utilisateur, compte.mot_de_passe)
     return imap

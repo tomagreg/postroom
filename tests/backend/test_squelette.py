@@ -1,7 +1,8 @@
 import pytest
 
 from postroom.__main__ import main
-from postroom.boites.base import analyser_list, decoder_utf7
+from postroom.boites import base
+from postroom.boites.base import analyser_list, decoder_utf7, ouvrir_imap
 from postroom.config import charger_comptes
 from postroom.verification import verifier
 
@@ -12,6 +13,7 @@ def fichier_comptes(tmp_path):
     f.write_text(
         "PERSO1_HOST=imap.gmail.com\nPERSO1_USER=a@example.org\nPERSO1_PASS=abcd efgh ijkl mnop\n"
         "VOILE_HOST=imap.example.com\nVOILE_USER=\nVOILE_PASS=\n"
+        "COURS_HOST=outlook.office365.com\nCOURS_USER=b@example.org\nCOURS_AUTH=oauth2\nCOURS_CLIENT_ID=abc\n"
     )
     return f
 
@@ -22,7 +24,7 @@ def test_charger_comptes(fichier_comptes):
     assert comptes["perso1"].configure
     assert comptes["perso1"].mot_de_passe == "abcd efgh ijkl mnop"
     assert not comptes["voile"].configure
-    assert not comptes["cours"].configure
+    assert comptes["cours"].configure and comptes["cours"].auth == "oauth2"
     assert "abcd" not in repr(comptes["perso1"])
 
 
@@ -92,3 +94,29 @@ def test_cli_aide(capsys):
     with pytest.raises(SystemExit):
         main(["--help"])
     assert "verifier-boites" in capsys.readouterr().out
+
+
+def test_ouvrir_imap_oauth2(fichier_comptes, monkeypatch):
+    appels = {}
+
+    class FausseConnexion:
+        def __init__(self, hote, port, timeout):
+            appels["hote"] = hote
+
+        def authenticate(self, mecanisme, rappel):
+            appels["mecanisme"] = mecanisme
+            appels["chaine"] = rappel(b"")
+
+        def login(self, *a):
+            raise AssertionError("pas de LOGIN en OAuth2")
+
+    import postroom.boites.oauth as oauth
+
+    monkeypatch.setattr(base.imaplib, "IMAP4_SSL", FausseConnexion)
+    monkeypatch.setattr(oauth, "jeton", lambda c: "JETON")
+    ouvrir_imap(charger_comptes(fichier_comptes)["cours"])
+    assert appels == {
+        "hote": "outlook.office365.com",
+        "mecanisme": "XOAUTH2",
+        "chaine": b"user=b@example.org\x01auth=Bearer JETON\x01\x01",
+    }
